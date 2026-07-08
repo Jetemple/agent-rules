@@ -1,0 +1,29 @@
+# Secrets / auth — never track
+*.key
+*.pem
+auth.json
+.env
+.env.*
+
+# Volatile agent artifacts
+history.jsonl
+logs_*.sqlite
+*.log
+session-*.json
+
+# recall derived index + per-machine config (only *.example.json ships)
+memory.db
+memory.db-*
+config.json
+bench_labels.json
+.venv/
+__pycache__/
+*.pyc
+
+# Private voice profiles (your-voice output must never be tracked)
+# Any file carrying the profile sentinel marker is rejected by the release gate.
+voice-profile*.md
+*.voice-profile.md
+
+# macOS
+.DS_Store
