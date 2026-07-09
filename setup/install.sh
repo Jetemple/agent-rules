@@ -82,5 +82,27 @@ else
   echo "skip: not a git checkout, no .git/hooks to install into"
 fi
 
+# The guard's identity patterns live OUTSIDE the repo (so the guard never encodes who you
+# are). Create a commented stub if absent; never touch an existing one.
+PRIV="$HOME/.config/agent-rules/private-patterns"
+if [ -f "$PRIV" ]; then
+  echo "ok (present, left untouched): $PRIV"
+else
+  echo "create: $PRIV (stub — add your identity patterns, one regex per line)"
+  if [ "$DRY" -eq 0 ]; then
+    mkdir -p "$(dirname "$PRIV")"
+    cat > "$PRIV" <<'EOF'
+# Private privacy-guard patterns (extended regex, one per line, case-insensitive).
+# Read by agent-rules/check-privacy.sh. This file lives OUTSIDE the repo on purpose:
+# it holds identity the public guard script must never encode. Do not commit it anywhere.
+# Examples (uncomment and edit):
+#   first[[:space:]._-]*last
+#   my-private-email-localpart
+#   my-employer-name
+#   my-local-username
+EOF
+  fi
+fi
+
 echo
 echo "Done. (dry-run=$DRY)  Run ./setup/doctor.sh to verify, ./check-privacy.sh to scan."
