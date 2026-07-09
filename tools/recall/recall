@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# tool-agnostic memory recall. Codex & Claude both: recall "your query"
+# Uses the project venv (libsql needs a prebuilt wheel -> Python 3.13).
+DIR="$(cd "$(dirname "$0")" && pwd)"
+exec "$DIR/.venv/bin/python3" "$DIR/recall.py" "$@"

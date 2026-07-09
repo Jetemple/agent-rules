@@ -1,0 +1,21 @@
+# the index: SQLite + vectors + FTS5, rebuilt from source markdown.
+# contains note text VERBATIM (txt column + fts5 index) — NEVER commit.
+memory.db
+memory.db-*
+
+# personal corpus config — points at the owner's private paths.
+# Ship the *.example.json templates instead; copy them to create these.
+config.json
+bench_labels.json
+
+# internal dogfooding scaffolding — references the owner's vault paths and
+# machine setup; kept locally but not shipped in the public repo.
+HANDOFF.md
+
+# generated artifacts
+map.html
+__pycache__/
+*.pyc
+
+# local python venv (libsql prebuilt wheel; rebuild per-machine with 3.13)
+.venv/

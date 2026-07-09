@@ -1,0 +1,4 @@
+# recall runtime deps. Install into the project venv (see docs/setup.md).
+# libsql ships prebuilt wheels only for some CPython versions — use Python 3.13
+# (3.14 has no wheel yet). Ollama is a separate system dependency, not pip-installable.
+libsql
