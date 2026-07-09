@@ -1,14 +1,23 @@
 # agent-rules
 
-A public, work-free operating manual for running coding agents (Claude Code, Codex CLI, and
-similar) — dogfooded configs, rules, and workflows I keep in sync across my machines.
+A public, work-free operating manual for running coding agents (Claude Code, Codex CLI,
+OpenCode, and similar) — dogfooded configs, rules, and workflows I keep in sync across my
+machines.
 
-It is structured so an LLM on a fresh macOS machine can read it, inspect the machine, reproduce
-this setup, and verify it took. Start at `AGENTS.md`, then follow `docs/setup.md`.
+It works as a **config hub**: `core.md` holds the shared, tool-agnostic rules; `map` says
+where each tool reads its global instructions; `setup/install.sh` symlinks each installed
+tool's load-point back at the hub. Edit the hub once, every agent gets it. A new machine is
+`git clone` + `./setup/install.sh`. It is structured so an LLM on a fresh macOS machine can
+read it, inspect the machine, reproduce this setup, and verify it took. Start at `AGENTS.md`,
+then follow `docs/setup.md`.
 
 ## What's here
 
-- `AGENTS.md` — canonical operating rules both agents load (`CLAUDE.md` symlinks to it).
+- `core.md` — the shared base rules every agent tool loads.
+- `map` — tool → load-point → hub-file; the director `install.sh` reads.
+- `AGENTS.md` — repo-local rules for agents working in this checkout (`CLAUDE.md` symlinks to it).
+- `check-privacy.sh` — pre-commit privacy guard; your identity patterns live outside the repo
+  in `~/.config/agent-rules/private-patterns`, so the guard itself stays generic.
 - `docs/` — the manual: setup, memory & recall, compaction, model & quota, drift.
 - `rules/` — composable rule snippets.
 - `workflows/` — my own generic skills (`handoff`, `wrap`, `your-voice`).

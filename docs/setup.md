@@ -17,7 +17,17 @@ git clone git@github.com:Jetemple/agent-rules.git && cd agent-rules
 ./setup/install.sh             # create the home-level symlinks
 ```
 `install.sh` is idempotent and refuses to overwrite a real (non-symlink) file — see the
-script header for its safety contract.
+script header for its safety contract. It does four things:
+
+1. Reads `map` and symlinks each *installed* tool's global load-point at the hub file
+   (e.g. `~/.codex/AGENTS.md` → `core.md`). Tools without a config dir are skipped.
+2. Special-cases Claude: creates a core-only `~/.claude/AGENTS.md` stub (with an
+   `@…/core.md` import line) if absent, and links `~/.claude/CLAUDE.md` → `AGENTS.md`.
+   An existing personal file is never touched.
+3. Installs the privacy-guard pre-commit hook into this checkout.
+4. Creates a stub `~/.config/agent-rules/private-patterns` if absent — **edit it**: add your
+   name, handles, and employer as regexes so `check-privacy.sh` can block them from ever
+   being committed. It lives outside the repo so the guard never encodes your identity.
 
 ## 3. recall corpus bootstrap
 `tools/recall` needs a local venv, a config, and a corpus — none of which are shipped.

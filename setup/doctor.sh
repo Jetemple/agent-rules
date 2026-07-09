@@ -36,8 +36,8 @@ else
   echo "ok: no private voice profile"
 fi
 
-echo "== install: home symlinks point at THIS repo =="
-# install.sh links these two. Absent -> not installed yet (warn). Present but wrong -> FAIL.
+echo "== hub install: each tool's load-point points at THIS repo (per map) =="
+# install.sh wires these. Tool not installed -> skip. Absent link -> warn. Wrong target -> FAIL.
 check_link() {  # check_link <dest> <expected-src>
   local dest="$1" want="$2"
   if [ -L "$dest" ]; then
@@ -52,8 +52,54 @@ check_link() {  # check_link <dest> <expected-src>
     echo "warn: $dest not linked (run ./setup/install.sh)"; notinstalled=1
   fi
 }
-check_link "$HOME/.claude/AGENTS.md"    "$REPO/AGENTS.md"
+expand() { printf '%s' "${1/#\~/$HOME}"; }
+while read -r tool loadpoint hubfile; do
+  case "$tool" in ''|\#*) continue;; esac
+  dest="$(expand "$loadpoint")"
+  if [ ! -d "$(dirname "$dest")" ]; then
+    echo "skip (not installed): $tool ($dest)"; continue
+  fi
+  check_link "$dest" "$REPO/$hubfile"
+done < "$REPO/map"
+
+echo "== claude: personal overlay imports the hub =="
+# Claude is special-cased (see map header): ~/.claude/AGENTS.md is a PERSONAL real file that
+# @imports core.md, and ~/.claude/CLAUDE.md symlinks to it.
+if [ -d "$HOME/.claude" ]; then
+  if [ -f "$HOME/.claude/AGENTS.md" ]; then
+    if grep -q "^@$REPO/core.md" "$HOME/.claude/AGENTS.md"; then
+      echo "ok: ~/.claude/AGENTS.md imports $REPO/core.md"
+    else
+      echo "warn: ~/.claude/AGENTS.md has no '@$REPO/core.md' line — hub rules not loaded by Claude"; notinstalled=1
+    fi
+  else
+    echo "warn: ~/.claude/AGENTS.md missing (run ./setup/install.sh to create the stub)"; notinstalled=1
+  fi
+  if [ -L "$HOME/.claude/CLAUDE.md" ] && [ "$(readlink "$HOME/.claude/CLAUDE.md")" = "AGENTS.md" ]; then
+    echo "ok: ~/.claude/CLAUDE.md -> AGENTS.md"
+  else
+    echo "warn: ~/.claude/CLAUDE.md is not a symlink to AGENTS.md"; notinstalled=1
+  fi
+else
+  echo "skip (not installed): claude (~/.claude absent)"
+fi
 check_link "$HOME/.claude/statusline.sh" "$REPO/setup/statusline.sh"
+
+echo "== privacy guard =="
+if [ -x "$REPO/check-privacy.sh" ]; then echo "ok: check-privacy.sh present + executable"
+else echo "FAIL: check-privacy.sh missing or not executable"; fail=1; fi
+if [ -L "$REPO/.git/hooks/pre-commit" ] && [ "$(readlink "$REPO/.git/hooks/pre-commit")" = "$REPO/setup/hooks/pre-commit" ]; then
+  echo "ok: pre-commit hook installed (ours)"
+elif [ -e "$REPO/.git/hooks/pre-commit" ]; then
+  echo "warn: a pre-commit hook exists but is NOT this repo's guard hook"; notinstalled=1
+else
+  echo "warn: no pre-commit hook (run ./setup/install.sh)"; notinstalled=1
+fi
+if [ -f "$HOME/.config/agent-rules/private-patterns" ]; then
+  echo "ok: private pattern file present"
+else
+  echo "warn: no ~/.config/agent-rules/private-patterns (guard runs generic checks only)"; notinstalled=1
+fi
 
 echo "== recall (skipped if not set up) =="
 if [ -d "$REPO/tools/recall/.venv" ]; then echo "ok: recall venv present"

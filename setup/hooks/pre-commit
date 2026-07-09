@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Blocks a commit if the privacy guard finds personal/employer data. Installed by install.sh
+# (symlinked into .git/hooks/pre-commit). Bypass in a genuine emergency with `git commit -n`.
+set -uo pipefail
+# .git/hooks/pre-commit is a symlink INTO the repo; resolve back to the repo root either way.
+REPO="$(git rev-parse --show-toplevel 2>/dev/null)"
+[ -z "$REPO" ] && REPO="$(cd "$(dirname "$0")/../.." && pwd)"
+exec "$REPO/check-privacy.sh"
