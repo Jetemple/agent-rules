@@ -1,0 +1,15 @@
+# Agent config map — the "director".
+#
+# One shared source of truth (this repo = the hub). Each agent tool reads its instructions from
+# a hardcoded location; install.sh reads this map and symlinks that location back to a hub file.
+# You edit the hub; install.sh projects it into every tool. Add a tool = add a line here.
+#
+# Columns (whitespace-separated):
+#   tool        load-point (where the tool reads its global rules)   hub-file (what to link it to)
+#
+# Claude is handled specially by install.sh (personal layer: its file @imports core.md and
+# CLAUDE.md symlinks to it), so it is intentionally NOT listed here.
+
+codex      ~/.codex/AGENTS.md                   core.md
+gemini     ~/.gemini/GEMINI.md                  core.md
+opencode   ~/.config/opencode/AGENTS.md         core.md
