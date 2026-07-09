@@ -1,0 +1,6 @@
+{
+  "autoCompactEnabled": true,
+  "autoCompactWindow": 150000,
+  "statusLine": { "type": "command", "command": "~/.claude/statusline.sh" },
+  "plugins": { "marketplaces": ["<your-marketplace-here>"], "enabled": [] }
+}

@@ -1,0 +1,7 @@
+[
+  ["how do I deploy the staging environment",            "deploy_runbook"],
+  ["what database does the billing service use",          "billing_architecture"],
+  ["the decision to drop the legacy queue worker",        "queue_migration_decision"],
+  ["which API key rotation policy applies to prod",       "secrets_policy"],
+  ["the onboarding checklist for new engineers",          "team_onboarding"]
+]

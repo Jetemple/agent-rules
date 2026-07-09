@@ -1,0 +1,6 @@
+{
+  "sources": [
+    { "label": "memory", "path": "~/notes/memory" },
+    { "label": "vault",  "path": "~/notes/vault" }
+  ]
+}
