@@ -68,6 +68,10 @@ write_block() {  # write_block <abs-src> <dest>  — real file; rewrites ONLY th
 
   [ "$DRY" -eq 1 ] && return
 
+  # Strip leading blank lines from the overlay — the writer below re-adds the one separator
+  # line, so keeping them would grow the gap by one line on every re-run.
+  [ -n "$outside" ] && outside="$(printf '%s\n' "$outside" | sed -n '/[^[:space:]]/,$p')"
+
   mkdir -p "$(dirname "$dest")"
   local tmp; tmp="$(mktemp "${dest}.XXXXXX")"
   {
