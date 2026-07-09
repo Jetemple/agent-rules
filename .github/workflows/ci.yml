@@ -1,0 +1,37 @@
+# Server-side backstop for the local pre-commit guard. The hook can be bypassed
+# (commit -n, web edits, a clone that never ran install.sh) — this can't.
+#
+# Private identity patterns come from the PRIVATE_PATTERNS repo secret (the same
+# one-regex-per-line format as ~/.config/agent-rules/private-patterns). Forks and
+# clones without the secret still get the full generic scan (keys, emails, home
+# paths), so this workflow works as boilerplate out of the box.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  privacy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Privacy guard
+        env:
+          PRIVATE_PATTERNS: ${{ secrets.PRIVATE_PATTERNS }}
+        run: |
+          if [ -n "$PRIVATE_PATTERNS" ]; then
+            printf '%s\n' "$PRIVATE_PATTERNS" > "$RUNNER_TEMP/private-patterns"
+            AGENT_RULES_PRIVATE_PATTERNS="$RUNNER_TEMP/private-patterns" ./check-privacy.sh
+          else
+            echo "note: no PRIVATE_PATTERNS secret (fork or fresh setup) — generic checks only"
+            ./check-privacy.sh
+          fi
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shellcheck (warning severity and up)
+        run: shellcheck -S warning check-privacy.sh setup/install.sh setup/doctor.sh setup/hooks/pre-commit setup/statusline.sh
