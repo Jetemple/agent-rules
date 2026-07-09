@@ -5,11 +5,21 @@
 # You edit the hub; install.sh projects it into every tool. Add a tool = add a line here.
 #
 # Columns (whitespace-separated):
-#   tool        load-point (where the tool reads its global rules)   hub-file (what to link it to)
+#   tool   load-point (where the tool reads its global rules)   hub-file   mode
+#
+# mode (how install.sh wires the load-point; defaults to link if the column is absent):
+#   link   symlink the load-point straight at the hub file. Live-sync (edit core.md → every
+#          link-mode tool sees it instantly), but the tool gets ONLY the shared rules — there
+#          is nowhere to add private overlay rules.
+#   block  write a REAL file at the load-point with a managed fenced block holding the hub
+#          file's contents; your private rules live OUTSIDE the fence in the same file and
+#          survive every re-run. Use this for tools that can't @import a second file (Codex).
+#          Trade-off: not live — re-run setup/install.sh to resync the block after editing
+#          core.md. setup/doctor.sh FAILs if a block has drifted.
 #
 # Claude is handled specially by install.sh (personal layer: its file @imports core.md and
 # CLAUDE.md symlinks to it), so it is intentionally NOT listed here.
 
-codex      ~/.codex/AGENTS.md                   core.md
-gemini     ~/.gemini/GEMINI.md                  core.md
-opencode   ~/.config/opencode/AGENTS.md         core.md
+codex      ~/.codex/AGENTS.md                   core.md   block
+gemini     ~/.gemini/GEMINI.md                  core.md   link
+opencode   ~/.config/opencode/AGENTS.md         core.md   link

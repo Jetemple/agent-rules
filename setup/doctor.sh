@@ -36,8 +36,8 @@ else
   echo "ok: no private voice profile"
 fi
 
-echo "== hub install: each tool's load-point points at THIS repo (per map) =="
-# install.sh wires these. Tool not installed -> skip. Absent link -> warn. Wrong target -> FAIL.
+echo "== hub install: each tool's load-point carries THIS repo's hub (per map) =="
+# install.sh wires these. Tool not installed -> skip. Absent -> warn. Wrong/drifted -> FAIL.
 check_link() {  # check_link <dest> <expected-src>
   local dest="$1" want="$2"
   if [ -L "$dest" ]; then
@@ -52,14 +52,41 @@ check_link() {  # check_link <dest> <expected-src>
     echo "warn: $dest not linked (run ./setup/install.sh)"; notinstalled=1
   fi
 }
+
+# Must match install.sh exactly.
+BLOCK_BEGIN='# >>> agent-rules hub (managed by install.sh — do not edit) >>>'
+BLOCK_END='# <<< agent-rules hub <<<'
+check_block() {  # check_block <dest> <expected-src> — fenced region must equal hub file verbatim
+  local dest="$1" want="$2"
+  if [ ! -e "$dest" ]; then
+    echo "warn: $dest has no managed block (run ./setup/install.sh)"; notinstalled=1; return
+  fi
+  if [ -L "$dest" ]; then
+    echo "FAIL: $dest is a symlink but map says mode=block (run ./setup/install.sh)"; fail=1; return
+  fi
+  if ! grep -qF "$BLOCK_BEGIN" "$dest" || ! grep -qF "$BLOCK_END" "$dest"; then
+    echo "FAIL: $dest is missing a managed-block marker (corrupt; re-run ./setup/install.sh)"; fail=1; return
+  fi
+  local got; got="$(awk -v b="$BLOCK_BEGIN" -v e="$BLOCK_END" '
+    $0==b {inblk=1; next} $0==e {inblk=0; next} inblk {print}' "$dest")"
+  if [ "$got" = "$(cat "$want")" ]; then
+    echo "ok: $dest managed block matches $want"
+  else
+    echo "FAIL: $dest managed block has DRIFTED from $want (re-run ./setup/install.sh)"; fail=1
+  fi
+}
 expand() { printf '%s' "${1/#\~/$HOME}"; }
-while read -r tool loadpoint hubfile; do
+while read -r tool loadpoint hubfile mode; do
   case "$tool" in ''|\#*) continue;; esac
   dest="$(expand "$loadpoint")"
   if [ ! -d "$(dirname "$dest")" ]; then
     echo "skip (not installed): $tool ($dest)"; continue
   fi
-  check_link "$dest" "$REPO/$hubfile"
+  case "${mode:-link}" in
+    block) check_block "$dest" "$REPO/$hubfile" ;;
+    link|'') check_link "$dest" "$REPO/$hubfile" ;;
+    *) echo "FAIL: $tool has unknown mode '$mode' in map (want link|block)"; fail=1 ;;
+  esac
 done < "$REPO/map"
 
 echo "== claude: personal overlay imports the hub =="

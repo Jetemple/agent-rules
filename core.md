@@ -14,8 +14,10 @@ machines. Tool-specific or personal detail lives in each tool's own file, not he
   AI/tool tokens in commits, branches, PRs, tags, or docs. Write as if the human authored it.
 - **Bounded tools first.** Treat context as a budget. Prefer `rg` and narrow file reads over
   broad REST/API calls, full diffs, or whole-file dumps. Pipe broad commands through a filter so
-  only the relevant slice reaches the session. For large scouting or cross-file mapping, delegate
-  to a bounded subagent with an explicit objective, scope, output contract, and stop condition.
+  only the relevant slice reaches the session. When you don't know which file holds an answer,
+  query the shipped semantic index (`tools/recall`) before grepping blindly. For large scouting
+  or cross-file mapping, delegate to a bounded subagent with an explicit objective, scope, output
+  contract, and stop condition.
 - **Don't revert changes you didn't make.** Work with a dirty worktree unless asked to revert;
   foreign uncommitted changes are usually another agent's work in progress, not an anomaly.
 - **State reality.** Report what's done AND verified, what's done-but-unverified, what's blocked,
@@ -31,6 +33,13 @@ machines. Tool-specific or personal detail lives in each tool's own file, not he
 - Bulk mechanical work (clear specs, migrations, data munging) → cheap/fast model. Anything
   user-facing (UI, copy, API design) → a model with good taste. Reviews benefit from a second,
   more capable model as an independent perspective.
+
+## Environment (macOS / zsh)
+
+- Shell is zsh (no automatic word-splitting) and macOS ships no GNU `timeout`. Pass multi-arg
+  commands as arrays, not space-separated strings, and use your harness's own timeout rather
+  than a `timeout` binary.
+- A command that hangs is usually waiting on a keychain / credential prompt, not working.
 
 ## Composition
 

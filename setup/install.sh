@@ -30,15 +30,69 @@ link() {  # link <abs-src> <dest>  — idempotent; refuses to clobber a real fil
   [ "$DRY" -eq 1 ] || { mkdir -p "$(dirname "$dest")"; ln -s "$src" "$dest"; }
 }
 
-echo "== tools (from map): link each installed tool's load-point -> hub =="
+# Managed-block markers. install.sh owns everything BETWEEN them; the user owns everything
+# outside. The literal strings are matched exactly by write_block and doctor.sh — do not reword.
+BLOCK_BEGIN='# >>> agent-rules hub (managed by install.sh — do not edit) >>>'
+BLOCK_END='# <<< agent-rules hub <<<'
+
+write_block() {  # write_block <abs-src> <dest>  — real file; rewrites ONLY the fenced region
+  local src="$1" dest="$2"
+  if [ ! -e "$src" ]; then echo "skip (missing src): $src"; return; fi
+
+  # Gather the content that must live OUTSIDE the fence (the user's private overlay).
+  local outside=""
+  if [ -L "$dest" ]; then
+    # A prior link-mode install (or the user) symlinked this. Converting to block mode: the
+    # symlink only ever pointed at core.md, so there is no private content to preserve.
+    echo "convert (link -> block): $dest"
+  elif [ -e "$dest" ]; then
+    if grep -qF "$BLOCK_BEGIN" "$dest" && grep -qF "$BLOCK_END" "$dest"; then
+      # Healthy managed file: keep everything except the old fenced region (re-emitted below).
+      outside="$(awk -v b="$BLOCK_BEGIN" -v e="$BLOCK_END" '
+        $0==b {inblk=1; next} $0==e {inblk=0; next} !inblk {print}' "$dest")"
+      echo "update (managed block): $dest"
+    elif grep -qF "$BLOCK_BEGIN" "$dest" || grep -qF "$BLOCK_END" "$dest"; then
+      # Exactly one marker: file is corrupt/half-edited. Don't guess — back up, preserve whole.
+      echo "REPAIR: $dest has a mismatched marker; backing up to $dest.bak and rebuilding." >&2
+      [ "$DRY" -eq 1 ] || cp "$dest" "$dest.bak"
+      outside="$(cat "$dest")"
+    else
+      # A real file with no fence yet (the tool's own rules, or a hand-made file). Preserve it
+      # entirely as the private overlay, below the fence.
+      echo "adopt (real file -> managed block, existing content preserved below fence): $dest"
+      outside="$(cat "$dest")"
+    fi
+  else
+    echo "create (managed block): $dest"
+  fi
+
+  [ "$DRY" -eq 1 ] && return
+
+  mkdir -p "$(dirname "$dest")"
+  local tmp; tmp="$(mktemp "${dest}.XXXXXX")"
+  {
+    printf '%s\n' "$BLOCK_BEGIN"
+    cat "$src"
+    printf '%s\n' "$BLOCK_END"
+    [ -n "$outside" ] && printf '\n%s\n' "$outside"
+  } > "$tmp"
+  mv "$tmp" "$dest"   # atomic swap: readers never see a half-written file
+}
+
+echo "== tools (from map): wire each installed tool's load-point -> hub =="
 # Only wire a tool whose home dir already exists (i.e. the tool is installed on this machine).
-while read -r tool loadpoint hubfile; do
+# mode column is optional; missing -> link (back-compat with older maps).
+while read -r tool loadpoint hubfile mode; do
   case "$tool" in ''|\#*) continue;; esac
   dest="$(expand "$loadpoint")"
   if [ ! -d "$(dirname "$dest")" ]; then   # tool's config dir absent -> tool not installed
     echo "skip (not installed): $tool ($dest)"; continue
   fi
-  link "$REPO/$hubfile" "$dest"
+  case "${mode:-link}" in
+    block) write_block "$REPO/$hubfile" "$dest" ;;
+    link|'') link "$REPO/$hubfile" "$dest" ;;
+    *) echo "REFUSE: $tool has unknown mode '$mode' in map (want link|block)" >&2 ;;
+  esac
 done < "$REPO/map"
 
 echo
