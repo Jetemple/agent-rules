@@ -34,4 +34,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Shellcheck (warning severity and up)
-        run: shellcheck -S warning check-privacy.sh setup/install.sh setup/doctor.sh setup/hooks/pre-commit setup/statusline.sh
+        run: shellcheck -S warning check-privacy.sh setup/install.sh setup/doctor.sh setup/hooks/pre-commit setup/statusline.sh setup/test-fresh-install.sh
+
+  fresh-install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Simulate a fresh machine (isolated $HOME, fake tool dirs) and run install.sh + doctor.sh
+        run: bash setup/test-fresh-install.sh

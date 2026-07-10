@@ -10,8 +10,13 @@ Follow in order. An LLM on a fresh machine should be able to execute this top to
    `ollama serve` in a spare terminal), then `ollama pull embeddinggemma:300m`.
 
 ## 2. Clone + install
+Clone into a dot folder in your home directory (e.g. `~/.agent-rules`), not a project/code
+folder — every tool's global load-point (`~/.claude/AGENTS.md`, `~/.codex/AGENTS.md`, etc.)
+symlinks or `@import`s back at this checkout, so it should live somewhere stable and out of
+the way, not alongside project repos.
+
 ```sh
-git clone git@github.com:Jetemple/agent-rules.git && cd agent-rules
+git clone git@github.com:Jetemple/agent-rules.git ~/.agent-rules && cd ~/.agent-rules
 # no SSH key? use HTTPS: git clone https://github.com/Jetemple/agent-rules.git
 ./setup/install.sh --dry-run   # preview every action
 ./setup/install.sh             # create the home-level symlinks

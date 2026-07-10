@@ -125,9 +125,19 @@ else
   echo "skip (not installed): claude (~/.claude absent)"
 fi
 
+copy_once() {  # copy_once <abs-src> <dest> — one-time seed; never touches an existing dest again
+  local src="$1" dest="$2"
+  if [ ! -e "$src" ]; then echo "skip (missing src): $src"; return; fi
+  if [ -e "$dest" ] || [ -L "$dest" ]; then
+    echo "ok (already seeded, left untouched for local edits): $dest"; return
+  fi
+  echo "seed: $dest (copied from $src, not linked — free to diverge per-device)"
+  [ "$DRY" -eq 1 ] || { mkdir -p "$(dirname "$dest")"; cp "$src" "$dest"; chmod +x "$dest"; }
+}
+
 echo
-echo "== statusline (optional) =="
-link "$REPO/setup/statusline.sh" "$HOME/.claude/statusline.sh"
+echo "== statusline (optional; seeded once as a real file, not symlinked — meant to diverge per-device) =="
+copy_once "$REPO/setup/statusline.sh" "$HOME/.claude/statusline.sh"
 
 echo
 echo "== privacy guard: install pre-commit hook =="
