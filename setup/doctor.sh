@@ -110,7 +110,13 @@ if [ -d "$HOME/.claude" ]; then
 else
   echo "skip (not installed): claude (~/.claude absent)"
 fi
-check_link "$HOME/.claude/statusline.sh" "$REPO/setup/statusline.sh"
+check_seeded() {  # check_seeded <dest> — one-time-copy target; just needs to exist + be executable
+  local dest="$1"
+  if [ -x "$dest" ]; then echo "ok: $dest present and executable"
+  elif [ -e "$dest" ]; then echo "warn: $dest present but not executable (chmod +x it)"; notinstalled=1
+  else echo "warn: $dest not seeded (run ./setup/install.sh)"; notinstalled=1; fi
+}
+check_seeded "$HOME/.claude/statusline.sh"
 
 echo "== privacy guard =="
 if [ -x "$REPO/check-privacy.sh" ]; then echo "ok: check-privacy.sh present + executable"

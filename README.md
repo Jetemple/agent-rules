@@ -26,10 +26,14 @@ then follow `docs/setup.md`.
 
 ## Quick start
 
+Clone it into a dot folder in your home directory (e.g. `~/.agent-rules`), not a project or
+code folder — it's a config hub every tool's global load-point points back at, not a project
+you `cd` into day to day.
+
 ```sh
 # SSH, or HTTPS: git clone https://github.com/Jetemple/agent-rules.git
-git clone git@github.com:Jetemple/agent-rules.git
-cd agent-rules
+git clone git@github.com:Jetemple/agent-rules.git ~/.agent-rules
+cd ~/.agent-rules
 # read docs/setup.md first — it lists prereqs (Homebrew, Python 3.13, Ollama) and the order
 ./setup/install.sh --dry-run    # preview
 ./setup/install.sh              # create symlinks
