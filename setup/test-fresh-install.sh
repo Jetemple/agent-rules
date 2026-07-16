@@ -18,6 +18,7 @@ trap 'rm -rf "$WORK"' EXIT
 REPO="$WORK/repo"
 cp -R "$REPO_SRC" "$REPO"
 export HOME="$WORK/home"
+export XDG_CONFIG_HOME="$HOME/.config"
 mkdir -p "$HOME/.claude" "$HOME/.codex" "$HOME/.gemini" "$HOME/.config/opencode"
 mkdir -p "$HOME/.private/wrap" "$HOME/.config/agent-rules" "$HOME/.codex/skills/your-voice"
 printf '%s\n' 'wrap ~/.private/wrap agents,codex,claude' \
@@ -35,10 +36,12 @@ printf '%s\n' \
   'local ~/.private/local agents' \
   'malformed-record' \
   > "$MALFORMED_HOME/.config/agent-rules/workflow-map"
-if HOME="$MALFORMED_HOME" "$REPO/setup/doctor.sh" > "$WORK/malformed-doctor.log" 2>&1; then
+if HOME="$MALFORMED_HOME" XDG_CONFIG_HOME="$MALFORMED_HOME/.config" \
+  "$REPO/setup/doctor.sh" > "$WORK/malformed-doctor.log" 2>&1; then
   fail "doctor.sh accepted a malformed private workflow map"
 fi
-if HOME="$MALFORMED_HOME" "$REPO/setup/install.sh" > "$WORK/malformed-install.log" 2>&1; then
+if HOME="$MALFORMED_HOME" XDG_CONFIG_HOME="$MALFORMED_HOME/.config" \
+  "$REPO/setup/install.sh" > "$WORK/malformed-install.log" 2>&1; then
   fail "install.sh accepted a malformed private workflow map"
 fi
 grep -qF "REFUSE: workflow map is invalid; no workflow links were installed." \
