@@ -1,3 +1,8 @@
+---
+name: your-voice
+description: Use when creating or updating a reusable writing voice profile for drafting commit messages, PR descriptions, documentation, or chat in a user's established style.
+---
+
 # your-voice
 
 Interview yourself into a reusable "voice profile" so an agent can draft in YOUR voice

@@ -1,0 +1,4 @@
+# name      source                    targets
+handoff     workflows/handoff         agents,codex,claude
+wrap        workflows/wrap            agents,codex,claude
+your-voice  workflows/your-voice      agents,codex,claude

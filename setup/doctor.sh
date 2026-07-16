@@ -89,6 +89,34 @@ while read -r tool loadpoint hubfile mode; do
   esac
 done < "$REPO/map"
 
+echo "== workflows: each effective registry entry is healthy =="
+. "$REPO/setup/workflows.sh"
+workflow_output=""
+if ! workflow_output="$(workflow_entries "$REPO")"; then
+  echo "FAIL: workflow map is invalid; no workflow entries were checked." >&2
+  fail=1
+else
+  while read -r origin name source targets; do
+    [ -n "$origin" ] || continue
+    src="$(workflow_source "$REPO" "$origin" "$source")"
+    [ -d "$src" ] || { echo "FAIL: workflow '$name' source missing: $src"; fail=1; continue; }
+    workflow_targets=()
+    IFS=, read -r -a workflow_targets <<< "$targets"
+    for target in "${workflow_targets[@]}"; do
+      catalog="$(workflow_catalog "$target")" || {
+        echo "FAIL: workflow '$name' has unknown target '$target'"; fail=1; continue
+      }
+      dest="$catalog/$name"
+      if [ -d "$dest" ] && [ ! -L "$dest" ] && \
+         [ "$(cd "$src" && pwd -P)" = "$(cd "$dest" && pwd -P)" ]; then
+        echo "ok: $dest is the selected source directory"
+      else
+        check_link "$dest" "$src"
+      fi
+    done
+  done <<< "$workflow_output"
+fi
+
 echo "== claude: personal overlay imports the hub =="
 # Claude is special-cased (see map header): ~/.claude/AGENTS.md is a PERSONAL real file that
 # @imports core.md, and ~/.claude/CLAUDE.md symlinks to it.
