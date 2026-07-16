@@ -100,6 +100,36 @@ while read -r tool loadpoint hubfile mode; do
 done < "$REPO/map"
 
 echo
+echo "== workflows: wire effective entries into each declared skill catalog =="
+. "$REPO/setup/workflows.sh"
+
+workflow_output=""
+if ! workflow_output="$(workflow_entries "$REPO")"; then
+  echo "REFUSE: workflow map is invalid; no workflow links were installed." >&2
+  exit 1
+fi
+
+while read -r origin name source targets; do
+  [ -n "$origin" ] || continue
+  src="$(workflow_source "$REPO" "$origin" "$source")"
+  [ -d "$src" ] || { echo "REFUSE: workflow '$name' source missing: $src" >&2; continue; }
+  workflow_targets=()
+  IFS=, read -r -a workflow_targets <<< "$targets"
+  for target in "${workflow_targets[@]}"; do
+    catalog="$(workflow_catalog "$target")" || {
+      echo "REFUSE: workflow '$name' has unknown target '$target'" >&2; continue
+    }
+    dest="$catalog/$name"
+    if [ -d "$dest" ] && [ ! -L "$dest" ] && \
+       [ "$(cd "$src" && pwd -P)" = "$(cd "$dest" && pwd -P)" ]; then
+      echo "ok (source directory): $dest"
+    else
+      link "$src" "$dest"
+    fi
+  done
+done <<< "$workflow_output"
+
+echo
 echo "== claude: personal overlay (core-only stub if absent; never clobbered) =="
 CLAUDE_DIR="$HOME/.claude"
 if [ -d "$CLAUDE_DIR" ]; then

@@ -15,6 +15,7 @@ then follow `docs/setup.md`.
 
 - `core.md` — the shared base rules every agent tool loads.
 - `map` — tool → load-point → hub-file; the director `install.sh` reads.
+- `workflow-map` — workflow name → source → skill catalogs; the public skill registry.
 - `AGENTS.md` — repo-local rules for agents working in this checkout (`CLAUDE.md` symlinks to it).
 - `check-privacy.sh` — pre-commit privacy guard; your identity patterns live outside the repo
   in `~/.config/agent-rules/private-patterns`, so the guard itself stays generic.
@@ -38,6 +39,16 @@ cd ~/.agent-rules
 ./setup/install.sh --dry-run    # preview
 ./setup/install.sh              # create symlinks
 ./setup/doctor.sh               # verify
+```
+
+The installer also registers every skill declared in `workflow-map` by linking it into each
+listed catalog (`agents`, `codex`, or `claude`). The checked-in map is the public registry. For
+machine-private skills or source overrides, create
+`~/.config/agent-rules/workflow-map` (or `$XDG_CONFIG_HOME/agent-rules/workflow-map`) with the
+same three-column format. A private entry with the same name replaces the public entry:
+
+```text
+wrap ~/.private/wrap agents,codex,claude
 ```
 
 ## Dependencies (not republished here)
