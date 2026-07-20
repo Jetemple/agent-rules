@@ -21,7 +21,7 @@ then follow `docs/setup.md`.
   in `~/.config/agent-rules/private-patterns`, so the guard itself stays generic.
 - `docs/` — the manual: setup, memory & recall, compaction, model & quota, drift.
 - `rules/` — composable rule snippets.
-- `workflows/` — my own generic skills (`handoff`, `wrap`, `your-voice`).
+- `workflows/` — my own generic skills (`drain-memory`, `handoff`, `wrap`, `your-voice`).
 - `setup/` — `install.sh`, `doctor.sh`, and example configs (macOS/zsh).
 - `tools/recall/` — a semantic memory-recall CLI.
 
