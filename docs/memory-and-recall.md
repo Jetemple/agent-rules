@@ -35,3 +35,26 @@ per machine. Only the corpus Markdown, the code, and `*.example.json` config are
 Config is read from `~/.recall/config.json` (the code looks there, not in the repo). Copy
 `config.example.json` to `~/.recall/config.json` and point it at your machine's corpus path
 (see `docs/setup.md` for the full bootstrap).
+
+## Draining stale memory (truth reconciliation)
+
+A memory corpus doesn't only grow and need tidying — it also **goes false**. A note that was
+true when written ("TICKET-123 awaiting Thursday's deploy") becomes confidently wrong once the
+work ships, yet recall surfaces it with the same authority as a current fact. Stale memory is
+worse than missing memory.
+
+Three distinct maintenance jobs, all against the same corpus:
+
+- **Intake** (wrap / a corpus-mining workflow) — capture facts not yet written down.
+- **Consolidation** — calibrate index hooks, merge redundant clusters, fix broken `[[links]]`.
+  Assumes the facts are still *true*.
+- **Draining** (`workflows/drain-memory`) — reconcile against current reality: find facts time
+  has *falsified* (lifecycle-complete work worded as in-flight, version-pinned references
+  silently superseded, point-in-time snapshots, internal contradictions) and delete/archive or
+  refresh them.
+
+Because the recall index (`~/.recall/memory.db`) is **derived**, a drain isn't complete until you
+reindex — deleting a corpus `.md` alone leaves the stale fact in the SQLite/FTS index until
+`python3 tools/recall/recall.py index` rebuilds it (the reindex also purges files that have
+disappeared from the walk). Draining is propose-only by default: it reasons from the corpus's own
+content and never calls a live tracker unless asked.
