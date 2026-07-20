@@ -35,18 +35,20 @@ script header for its safety contract. It does four things:
    being committed. It lives outside the repo so the guard never encodes your identity.
 
 ## 3. recall corpus bootstrap
-`tools/recall` needs a local venv, a config, and a corpus — none of which are shipped.
+`install.sh` already seeded `~/.recall/recall.py` and friends (a one-time copy from
+`tools/recall/` — see the script's `copy_once` step). recall.py self-bootstraps into a venv
+under `~/.recall/.venv`, so build that venv there, not inside the repo checkout:
 
 ```sh
-cd tools/recall
+cd ~/.recall
 python3.13 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt          # installs libsql
 ```
 
-Config is read from `~/.recall/config.json` (NOT the repo dir — the code looks in `~/.recall`):
+Config is read from `~/.recall/config.json` (NOT shipped — `install.sh` only seeds the
+`config.example.json` template alongside it):
 ```sh
-mkdir -p ~/.recall
-cp config.example.json ~/.recall/config.json    # then edit the paths
+cp config.example.json config.json      # then edit the paths
 ```
 The example points at `~/notes/memory` and `~/notes/vault`. Edit those to your real corpus
 dirs, or create them (`mkdir -p ~/notes/memory`) if you're starting empty.
@@ -56,6 +58,12 @@ Build the index once — it does **not** auto-build on first query:
 python3 recall.py index          # embeds the corpus into ~/.recall/memory.db
 python3 recall.py "a test query" # confirm you get ranked hits, not "(no matches)"
 ```
+
+Later updates to `tools/recall/recall.py` in this repo do **not** propagate automatically —
+`~/.recall` is seeded once and left free to diverge per-device (same contract as
+`~/.claude/statusline.sh`). Re-copy by hand if you want a repo-side fix on an existing machine:
+`cp tools/recall/recall.py ~/.recall/recall.py`.
+
 `~/.recall/memory.db` is a derived index (incremental on re-runs) — never commit it.
 
 ## 4. Verify

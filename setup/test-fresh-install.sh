@@ -62,7 +62,8 @@ echo "== install =="
 "$REPO/setup/install.sh"
 
 echo "== doctor: expect a healthy, fully-wired install (recall is the one expected warn) =="
-"$REPO/setup/doctor.sh" || fail "doctor.sh reported a real FAIL (see output above)"
+doctor_out="$("$REPO/setup/doctor.sh")" || fail "doctor.sh reported a real FAIL (see output above)"
+echo "$doctor_out"
 pass "doctor.sh clean"
 
 echo "== installer: canonicalize equivalent relative workflow symlinks =="
@@ -80,6 +81,13 @@ if "$REPO/setup/doctor.sh"; then fail "doctor accepted an incorrect workflow lin
 "$REPO/setup/doctor.sh" || fail "doctor remained unhealthy after repair"
 pass "doctor detects workflow drift and installer repairs it"
 
+echo "== doctor checks the recall venv where it actually lives (~/.recall/.venv, not the repo) =="
+printf '%s\n' "$doctor_out" | grep -qF '.recall/.venv' \
+  || fail "doctor.sh's recall venv check didn't reference ~/.recall/.venv"
+printf '%s\n' "$doctor_out" | grep -qF 'tools/recall/.venv' \
+  && fail "doctor.sh still checks the wrong path (repo's tools/recall/.venv can never exist)"
+pass "doctor.sh recall venv check targets ~/.recall/.venv"
+
 echo "== spot-check the wiring doctor is supposed to verify =="
 [ -L "$HOME/.gemini/GEMINI.md" ] || fail "gemini not symlinked (mode=link)"
 [ -L "$HOME/.config/opencode/AGENTS.md" ] || fail "opencode not symlinked (mode=link)"
@@ -87,6 +95,9 @@ grep -qF '# >>> agent-rules hub' "$HOME/.codex/AGENTS.md" || fail "codex block n
 [ -L "$HOME/.claude/CLAUDE.md" ] || fail "claude CLAUDE.md -> AGENTS.md symlink missing"
 grep -q "^@$REPO/core.md" "$HOME/.claude/AGENTS.md" || fail "claude AGENTS.md missing hub import"
 [ -x "$HOME/.claude/statusline.sh" ] || fail "statusline.sh not seeded/executable"
+[ -x "$HOME/.recall/recall.py" ] || fail "~/.recall/recall.py not seeded/executable"
+[ -f "$HOME/.recall/config.example.json" ] || fail "~/.recall/config.example.json not seeded"
+[ ! -x "$HOME/.recall/README.md" ] || fail "~/.recall/README.md wrongly made executable"
 pass "hub wiring matches map"
 
 for catalog in .agents .codex .claude; do
@@ -110,6 +121,13 @@ printf '#!/bin/sh\necho "MY CUSTOM STATUSLINE"\n' > "$HOME/.claude/statusline.sh
 grep -q "MY CUSTOM STATUSLINE" "$HOME/.claude/statusline.sh" \
   || fail "install.sh clobbered a local statusline.sh edit"
 pass "statusline.sh divergence survives a re-run"
+
+echo "== recall is seeded ONCE then left alone (must survive a re-run untouched) =="
+printf '#!/usr/bin/env python3\n# MY CUSTOM RECALL EDIT\n' > "$HOME/.recall/recall.py"
+"$REPO/setup/install.sh"
+grep -q "MY CUSTOM RECALL EDIT" "$HOME/.recall/recall.py" \
+  || fail "install.sh clobbered a local ~/.recall/recall.py edit"
+pass "~/.recall divergence survives a re-run"
 
 echo
 echo "ALL FRESH-INSTALL CHECKS PASSED"

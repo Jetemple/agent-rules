@@ -163,12 +163,13 @@ else
 fi
 
 echo "== recall (skipped if not set up) =="
-if [ -d "$REPO/tools/recall/.venv" ]; then echo "ok: recall venv present"
-else echo "warn: no tools/recall/.venv (run the recall bootstrap in docs/setup.md)"; notinstalled=1; fi
+check_seeded "$HOME/.recall/recall.py"
+if [ -d "$HOME/.recall/.venv" ]; then echo "ok: recall venv present"
+else echo "warn: no ~/.recall/.venv (run the recall bootstrap in docs/setup.md)"; notinstalled=1; fi
 if [ -f "$HOME/.recall/config.json" ]; then echo "ok: ~/.recall/config.json present"
 else echo "warn: no ~/.recall/config.json (copy config.example.json there)"; notinstalled=1; fi
 if [ -f "$HOME/.recall/memory.db" ]; then echo "ok: ~/.recall/memory.db index built"
-else echo "warn: no ~/.recall/memory.db (run: python3 tools/recall/recall.py index)"; notinstalled=1; fi
+else echo "warn: no ~/.recall/memory.db (run: python3 ~/.recall/recall.py index)"; notinstalled=1; fi
 
 echo
 if [ "$fail" -ne 0 ]; then

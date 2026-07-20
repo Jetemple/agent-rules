@@ -155,19 +155,27 @@ else
   echo "skip (not installed): claude (~/.claude absent)"
 fi
 
-copy_once() {  # copy_once <abs-src> <dest> — one-time seed; never touches an existing dest again
+copy_once() {  # copy_once <abs-src> <dest> — one-time seed; never touches an existing dest again.
+  # Preserves the source's own executable bit (cp -p) rather than forcing +x on every seed.
   local src="$1" dest="$2"
   if [ ! -e "$src" ]; then echo "skip (missing src): $src"; return; fi
   if [ -e "$dest" ] || [ -L "$dest" ]; then
     echo "ok (already seeded, left untouched for local edits): $dest"; return
   fi
   echo "seed: $dest (copied from $src, not linked — free to diverge per-device)"
-  [ "$DRY" -eq 1 ] || { mkdir -p "$(dirname "$dest")"; cp "$src" "$dest"; chmod +x "$dest"; }
+  [ "$DRY" -eq 1 ] || { mkdir -p "$(dirname "$dest")"; cp -p "$src" "$dest"; }
 }
 
 echo
 echo "== statusline (optional; seeded once as a real file, not symlinked — meant to diverge per-device) =="
 copy_once "$REPO/setup/statusline.sh" "$HOME/.claude/statusline.sh"
+
+echo
+echo "== recall (optional; seeded once into ~/.recall — code lives outside the repo since it self-bootstraps a venv there and reads ~/.recall/config.json) =="
+for f in recall.py recall requirements.txt README.md config.example.json \
+         bench_efficiency.py bench_quality.py bench_vs_grep.py bench_labels.example.json .gitignore; do
+  copy_once "$REPO/tools/recall/$f" "$HOME/.recall/$f"
+done
 
 echo
 echo "== privacy guard: install pre-commit hook =="
