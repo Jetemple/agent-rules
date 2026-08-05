@@ -1,6 +1,6 @@
 ---
 name: drain-memory
-description: Use at any point when memories may have gone false — "drain my memory", "re-align memories", "what's stale in memory", "/drain-memory", "you're acting on something outdated", "these notes don't match reality anymore". Sweeps the recall memory corpus for facts that time has falsified — lifecycle-complete work still worded as in-flight, version-pinned references silently superseded, point-in-time snapshots that have decayed, and internal contradictions — and proposes drain (delete/archive) or refresh for each before touching anything. NOT for calibrating hooks or merging clusters (a consolidation pass) or for adding new facts (wrap / a corpus-mining workflow).
+description: Use when memories may have gone false — "drain my memory", "what's stale in memory", "re-align memories", "/drain-memory", "you're acting on something outdated". Sweeps the recall corpus for facts time has falsified (lifecycle-complete work worded as in-flight, superseded version pins, decayed snapshots, internal contradictions) and proposes drain (delete/archive) or refresh for each before touching anything. NOT for consolidation (merging clusters, fixing links) or adding new facts (wrap / corpus-mining).
 ---
 
 # drain-memory
@@ -23,10 +23,8 @@ the memory-maintenance family; the others don't do this job:
 - **drain-memory** — *truth reconciliation*: find facts that were true when written but time
   has since **falsified**, and drain or refresh them.
 
-The failure this prevents: a memory says "TICKET-123 awaiting Thursday's deploy," written weeks
-ago; recall surfaces it; the agent acts on shipped work as if it were still in flight. Stale
-memory is worse than missing memory — it loads with the same authority as a current fact and is
-confidently wrong.
+Why it matters: a memory like "TICKET-123 awaiting Thursday's deploy," written weeks ago, still
+surfaces with full authority after the work ships. Stale memory is worse than missing memory.
 
 ## Core idea: propose, then drain
 
@@ -213,7 +211,6 @@ is the whole story.
   hand off, don't do it here.
 
 ## Relationship to sibling workflows
-Drain is the truth-checking cousin of the consolidation pass: consolidation fixes a fact's
-*shape* (assuming it's current); drain checks whether it's still *true*. A healthy cadence:
+Consolidation fixes a fact's *shape*; drain checks whether it's still *true*. Healthy cadence:
 **wrap** (per session) → **corpus-mining** (retrospective intake) → **drain-memory** (kill the
 false) → **consolidation** (calibrate what remains).
