@@ -1,6 +1,9 @@
 {
   "autoCompactEnabled": true,
-  "autoCompactWindow": 150000,
+  "env": {
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "200000",
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "100"
+  },
   "statusLine": { "type": "command", "command": "~/.claude/statusline.sh" },
   "plugins": { "marketplaces": ["<your-marketplace-here>"], "enabled": [] }
 }
