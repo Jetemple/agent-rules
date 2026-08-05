@@ -19,7 +19,8 @@ then follow `docs/setup.md`.
 - `AGENTS.md` — repo-local rules for agents working in this checkout (`CLAUDE.md` symlinks to it).
 - `check-privacy.sh` — pre-commit privacy guard; your identity patterns live outside the repo
   in `~/.config/agent-rules/private-patterns`, so the guard itself stays generic.
-- `docs/` — the manual: setup, memory & recall, compaction, model & quota, drift.
+- `docs/` — the manual: setup, memory & recall, compaction, model & quota, drift, codex custom
+  providers.
 - `rules/` — composable rule snippets.
 - `workflows/` — my own generic skills (`drain-memory`, `handoff`, `wrap`, `your-voice`).
 - `setup/` — `install.sh`, `doctor.sh`, and example configs (macOS/zsh).
