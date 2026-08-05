@@ -1,6 +1,6 @@
 ---
 name: wrap
-description: Use at the END of a session to capture durable facts worth remembering — "/wrap", "wrap up", "save what's useful from this session", "remember the important stuff before I go". Reflects on the conversation just had (it's already in context), dedups against existing memory, proposes the keepers, and writes the approved ones. NOT for mining the whole transcript corpus retrospectively (that's a job for a separate corpus-mining workflow) or pruning what already exists (that's a separate consolidation pass).
+description: Use at the END of a session to capture durable facts — "/wrap", "wrap up", "save what's useful from this session", "remember the important stuff before I go". Reflects on the conversation just had (already in context), dedups against existing memory, proposes the keepers, writes the approved ones. NOT for retrospective corpus mining or pruning existing memory (a consolidation pass).
 ---
 
 # wrap
@@ -12,12 +12,9 @@ description: Use at the END of a session to capture durable facts worth remember
 > and a means of reindexing after a write. Set recall up first; if your corpus uses different
 > conventions, adapt the frontmatter and index steps below to match it.
 
-Session-end memory capture. The just-finished conversation is **already in your
-context** — so unlike a retrospective corpus-mining workflow (which fans reader agents
-over the whole transcript corpus), `/wrap` needs no Workflow and no transcript mining. You simply
-**reflect on the session you just lived through**, pull out the few durable facts
-worth keeping, and write the approved ones. It's the lightweight, single-session,
-in-the-moment counterpart to backfill.
+Session-end memory capture. The just-finished conversation is **already in your context** — no
+transcript mining needed. You **reflect on the session you just lived through**, pull out the few
+durable facts worth keeping, and write the approved ones.
 
 ## The one job: separate durable from conversational
 

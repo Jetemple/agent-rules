@@ -21,9 +21,10 @@ each tool. This file layers only the repo-local rules on top. (`CLAUDE.md` symli
 - `check-privacy.sh` — privacy guard. Identity patterns live OUTSIDE the repo in
   `~/.config/agent-rules/private-patterns`, so the guard never encodes who you are.
 - `setup/` — `install.sh` (wires the map + hook), `doctor.sh` (verifies), statusline, hooks.
-- `docs/` — the manual: setup, memory & recall, compaction, model & quota, drift.
+- `docs/` — the manual: setup, memory & recall, compaction, model & quota, drift, codex
+  custom providers.
 - `rules/` — composable rule snippets for project-level rules files.
-- `workflows/` — generic skills (`handoff`, `wrap`, `your-voice`).
+- `workflows/` — generic skills (`drain-memory`, `handoff`, `wrap`, `your-voice`).
 - `tools/recall/` — a semantic memory-recall CLI.
 
 ## Load Docs On Demand

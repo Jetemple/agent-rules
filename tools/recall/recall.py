@@ -6,6 +6,8 @@ Engine : libSQL (native F32_BLOB vectors + brute-force vector_distance_cos) + FT
 Embed  : Ollama `embeddinggemma` (768-d, fully offline).
 Recall : vector-only by default (see cmd_recall); --hybrid adds FTS5 + Reciprocal Rank
          Fusion, and FTS-only is the automatic fallback when the embedder is unreachable.
+Output : each hit is tagged by which arm matched — [V+K] both, [V] semantic only (the
+         grep-can't-find-it case), [K] keyword only (or the embedder-down fallback).
 
 Usage:
   recall.py index            # incremental (only changed files) — run this before first query

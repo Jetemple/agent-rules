@@ -11,9 +11,8 @@ Follow in order. An LLM on a fresh machine should be able to execute this top to
 
 ## 2. Clone + install
 Clone into a dot folder in your home directory (e.g. `~/.agent-rules`), not a project/code
-folder — every tool's global load-point (`~/.claude/AGENTS.md`, `~/.codex/AGENTS.md`, etc.)
-symlinks or `@import`s back at this checkout, so it should live somewhere stable and out of
-the way, not alongside project repos.
+folder — every tool's global load-point points back at this checkout, so it should live
+somewhere stable and out of the way.
 
 ```sh
 git clone git@github.com:Jetemple/agent-rules.git ~/.agent-rules && cd ~/.agent-rules
@@ -21,50 +20,41 @@ git clone git@github.com:Jetemple/agent-rules.git ~/.agent-rules && cd ~/.agent-
 ./setup/install.sh --dry-run   # preview every action
 ./setup/install.sh             # create the home-level symlinks
 ```
-`install.sh` is idempotent and refuses to overwrite a real (non-symlink) file — see the
-script header for its safety contract. It does four things:
+
+`install.sh` is idempotent and refuses to overwrite a real (non-symlink) file. It does four
+things:
 
 1. Reads `map` and symlinks each *installed* tool's global load-point at the hub file
    (e.g. `~/.codex/AGENTS.md` → `core.md`). Tools without a config dir are skipped.
 2. Special-cases Claude: creates a core-only `~/.claude/AGENTS.md` stub (with an
-   `@…/core.md` import line) if absent, and links `~/.claude/CLAUDE.md` → `AGENTS.md`.
-   An existing personal file is never touched.
-3. Installs the privacy-guard pre-commit hook into this checkout.
+   `@…/core.md` import line) if absent, and links `~/.claude/CLAUDE.md` → `AGENTS.md`. An
+   existing personal file is never touched.
+3. Installs the privacy-guard pre-commit hook.
 4. Creates a stub `~/.config/agent-rules/private-patterns` if absent — **edit it**: add your
-   name, handles, and employer as regexes so `check-privacy.sh` can block them from ever
-   being committed. It lives outside the repo so the guard never encodes your identity.
+   name, handles, and employer as regexes so `check-privacy.sh` blocks them from ever being
+   committed. It lives outside the repo so the guard never encodes your identity.
 
 ## 3. recall corpus bootstrap
-`install.sh` already seeded `~/.recall/recall.py` and friends (a one-time copy from
-`tools/recall/` — see the script's `copy_once` step). recall.py self-bootstraps into a venv
-under `~/.recall/.venv`, so build that venv there, not inside the repo checkout:
+`install.sh` seeds `~/.recall/recall.py` and friends once (a `copy_once` step). Build the
+venv there, not inside the repo checkout:
 
 ```sh
 cd ~/.recall
 python3.13 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt          # installs libsql
-```
-
-Config is read from `~/.recall/config.json` (NOT shipped — `install.sh` only seeds the
-`config.example.json` template alongside it):
-```sh
 cp config.example.json config.json      # then edit the paths
-```
-The example points at `~/notes/memory` and `~/notes/vault`. Edit those to your real corpus
-dirs, or create them (`mkdir -p ~/notes/memory`) if you're starting empty.
-
-Build the index once — it does **not** auto-build on first query:
-```sh
-python3 recall.py index          # embeds the corpus into ~/.recall/memory.db
-python3 recall.py "a test query" # confirm you get ranked hits, not "(no matches)"
+python3 recall.py index                 # embeds the corpus into ~/.recall/memory.db
+python3 recall.py "a test query"        # confirm you get ranked hits, not "(no matches)"
 ```
 
-Later updates to `tools/recall/recall.py` in this repo do **not** propagate automatically —
-`~/.recall` is seeded once and left free to diverge per-device (same contract as
-`~/.claude/statusline.sh`). Re-copy by hand if you want a repo-side fix on an existing machine:
-`cp tools/recall/recall.py ~/.recall/recall.py`.
+The example config points at `~/notes/memory` and `~/notes/vault` — edit to your real corpus
+dirs, or `mkdir -p ~/notes/memory` to start empty. The index does **not** auto-build on first
+query.
 
-`~/.recall/memory.db` is a derived index (incremental on re-runs) — never commit it.
+Repo updates to `tools/recall/recall.py` do **not** propagate automatically — `~/.recall` is
+seeded once and left free to diverge per-device (same contract as `~/.claude/statusline.sh`).
+Re-copy by hand if you want a repo-side fix. `~/.recall/memory.db` is a derived index — never
+commit it.
 
 ## 4. Verify
 ```sh

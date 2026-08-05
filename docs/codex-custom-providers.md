@@ -1,13 +1,13 @@
 # Codex custom model providers
 
-How to add a non-OpenAI provider (DeepSeek as the worked example) to the Codex CLI without
-breaking the OpenAI models. Verified against codex 0.146, 2026-08.
+Add a non-OpenAI provider (DeepSeek as the worked example) to the Codex CLI without breaking
+the OpenAI models. Verified against codex 0.146, 2026-08.
 
 ## One provider per session
 
-`model_provider` in `~/.codex/config.toml` routes **every** model name to that provider's API.
-Setting it globally to a custom provider silently breaks the OpenAI models — requests fail with
-the provider's "unsupported model" error. Never flip the global default.
+`model_provider` in `~/.codex/config.toml` routes **every** model name to that provider's API —
+setting it globally to a custom provider silently breaks the OpenAI models ("unsupported
+model" errors). Never flip the global default; use a profile (below).
 
 ## Provider definition (base config)
 
@@ -22,21 +22,19 @@ wire_api = "responses"
 ```
 
 - `wire_api = "responses"` is required — codex 0.146 dropped `wire_api = "chat"`. Only models
-  that speak the Responses API work (as of 2026-08 that is `deepseek-v4-flash`;
-  `deepseek-v4-pro` does not).
-- The API key is read from the environment variable named by `env_key`. Export it from your
-  shell profile; keep the key itself out of any synced or public file.
+  speaking the Responses API work (as of 2026-08: `deepseek-v4-flash`; `deepseek-v4-pro` does
+  not).
+- The API key comes from the env var named by `env_key` — export it from your shell profile,
+  never a synced or public file.
 
-**TOML footgun:** every key after a `[table]` header until the next header belongs to that
-table. Top-level settings (`sandbox_mode`, `approval_policy`, `model_verbosity`,
-`model_auto_compact_token_limit`, ...) must appear **above** the first `[model_providers.*]`
-header, or they are silently swallowed into the provider table and stop applying.
+**TOML footgun:** every key after a `[table]` header belongs to that table until the next
+header. Top-level settings (`sandbox_mode`, `approval_policy`, ...) must appear **above** the
+first `[model_providers.*]` header, or they are silently swallowed and stop applying.
 
 ## Profiles: run both providers side by side
 
-Keep the base config on OpenAI and create a standalone profile file
-`$CODEX_HOME/<name>.config.toml` (e.g. `~/.codex/deepseek.config.toml`) that flips only the
-model and provider:
+Keep the base config on OpenAI; create a standalone profile file
+`$CODEX_HOME/<name>.config.toml` (e.g. `~/.codex/deepseek.config.toml`) that flips only:
 
 ```toml
 model = "deepseek-v4-flash"
@@ -45,20 +43,17 @@ model_reasoning_effort = "high"
 model_catalog_json = "~/.codex/model_catalog.json"
 ```
 
-Launch with `codex --profile deepseek`. In this codex version, inline `[profiles.<name>]`
-tables inside `config.toml` are **rejected** — profiles must be standalone files. Profile files
-layer on top of the base config, which is why the provider definition above can live in the
-base config only.
+Launch with `codex --profile deepseek`. Inline `[profiles.<name>]` tables inside `config.toml`
+are **rejected** in this version — profiles must be standalone files layered on the base
+config (which is why the provider definition lives in the base).
 
 ## Model catalog (the `/models` picker)
 
-The picker is fed by the model catalog: point `model_catalog_json` at a JSON file with
-`{"models": [...]}` entries shaped like codex's `ModelInfo`. Easiest path: copy an existing
-entry from `~/.codex/models_cache.json` and override the fields. Gotchas:
-
-- `default_reasoning_summary` is a string enum (`"auto"`), not null.
-- `apply_patch_tool_type` only accepts `freeform`.
-- `web_search_tool_type` only accepts `text` / `text_and_image`.
+Point `model_catalog_json` at a JSON file of `{"models": [...]}` entries shaped like codex's
+`ModelInfo` — easiest is copying an entry from `~/.codex/models_cache.json` and overriding.
+Gotchas: `default_reasoning_summary` is a string enum (`"auto"`), not null;
+`apply_patch_tool_type` only accepts `freeform`; `web_search_tool_type` only accepts `text` /
+`text_and_image`.
 
 ## Resume clobber
 
