@@ -10,6 +10,12 @@ machines. Tool-specific or personal detail lives in each tool's own file, not he
   create/update, or any remote write, stop and get explicit confirmation once the repo, branch,
   action, and intended diff are all known. A broad "fix it" / "go ahead" / "ship it" is not
   approval for a specific commit or push.
+- **NEVER merge to the default branch or trigger a release yourself.** The human clicks merge.
+  Approval must literally name the action ("merge PR #12", "tag the release") — enthusiasm
+  ("lets push!", "ship it", "lets go") is not it. If the literal reading of a request is
+  already satisfied (e.g. "push" when everything is pushed), do NOT escalate to the next
+  irreversible action; report the state and stop. Merging a release PR IS releasing when CI
+  auto-publishes on the default branch — treat them as one decision.
 - **No AI attribution anywhere.** No "Generated with" footers, no `Co-Authored-By` trailers, no
   AI/tool tokens in commits, branches, PRs, tags, or docs. Write as if the human authored it.
 - **Bounded tools first.** Treat context as a budget. Prefer `rg` and narrow file reads over
