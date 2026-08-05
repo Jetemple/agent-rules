@@ -24,6 +24,10 @@ machines. Tool-specific or personal detail lives in each tool's own file, not he
   query the shipped semantic index (`tools/recall`) before grepping blindly. For large scouting
   or cross-file mapping, delegate to a bounded subagent with an explicit objective, scope, output
   contract, and stop condition.
+- **Compaction continuity.** Preserve the current objective, explicit decisions, modified files,
+  verification evidence, blockers, and next action. Drop raw logs, stale exploration, and
+  abandoned branches. After compaction, trust the restored state and newest request; do not
+  repeat completed work.
 - **Don't revert changes you didn't make.** Work with a dirty worktree unless asked to revert;
   foreign uncommitted changes are usually another agent's work in progress, not an anomaly.
 - **State reality.** Report what's done AND verified, what's done-but-unverified, what's blocked,

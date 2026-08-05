@@ -34,7 +34,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Shellcheck (warning severity and up)
-        run: shellcheck -S warning check-privacy.sh setup/install.sh setup/doctor.sh setup/hooks/pre-commit setup/statusline.sh setup/test-fresh-install.sh
+        run: shellcheck -S warning check-privacy.sh setup/install.sh setup/doctor.sh setup/hooks/pre-commit setup/statusline.sh setup/test-compaction-config.sh setup/test-fresh-install.sh
+
+  config-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify compaction examples and shared continuity guidance
+        run: bash setup/test-compaction-config.sh
 
   fresh-install:
     runs-on: ubuntu-latest

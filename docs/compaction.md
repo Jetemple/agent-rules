@@ -4,8 +4,8 @@ Long sessions eventually fill the model's context window. **Auto-compaction** su
 context into a compact form so work can continue without a hard stop. Enable it on both agents
 and let the harness handle it rather than nagging yourself to `/compact`.
 
-> The numbers below are **example values** for a 200k-token window. Pick your own based on the
-> model window you actually run and how much headroom you want.
+> The numbers below configure a 200k-token effective window. Pick your own based on the model
+> window you actually run and how much headroom you want.
 
 ## Claude Code
 
@@ -14,16 +14,20 @@ Set in your settings JSON:
 ```json
 {
   "autoCompactEnabled": true,
-  "autoCompactWindow": 150000
+  "env": {
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "200000",
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "100"
+  }
 }
 ```
 
-The window math: `used tokens + free space + auto-compact buffer = model window`. With a 200k
-window and `autoCompactWindow=150000`, you reserve ~50k as the compaction buffer, and
-auto-compaction fires as free space approaches zero.
+`CLAUDE_CODE_AUTO_COMPACT_WINDOW` sets the context capacity used for auto-compaction
+calculations and is capped at the model's actual context window. The percentage override is
+applied to that effective capacity; `100` defers compaction as far as Claude's safety buffers
+allow. Omit it to use Claude's default threshold.
 
 - `/context` is the **live source of truth** for the current session's actual trigger — check
-  it if the buffer doesn't look right.
+  it because the status line continues to measure against the model's full context window.
 - A running session may not pick up a settings change; run `/compact` manually at the next safe
   turn boundary, and restart the session when convenient.
 
@@ -32,7 +36,7 @@ auto-compaction fires as free space approaches zero.
 Set in `~/.codex/config.toml`:
 
 ```toml
-model_auto_compact_token_limit = 150000
+model_auto_compact_token_limit = 200000
 ```
 
 If you use them, PreCompact / PostCompact hooks (in `~/.codex/hooks.json`) can drop anchor notes
