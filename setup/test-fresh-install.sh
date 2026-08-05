@@ -95,9 +95,9 @@ grep -qF '# >>> agent-rules hub' "$HOME/.codex/AGENTS.md" || fail "codex block n
 [ -L "$HOME/.claude/CLAUDE.md" ] || fail "claude CLAUDE.md -> AGENTS.md symlink missing"
 grep -q "^@$REPO/core.md" "$HOME/.claude/AGENTS.md" || fail "claude AGENTS.md missing hub import"
 [ -x "$HOME/.claude/statusline.sh" ] || fail "statusline.sh not seeded/executable"
-[ -x "$HOME/.recall/recall.py" ] || fail "~/.recall/recall.py not seeded/executable"
-[ -f "$HOME/.recall/config.example.json" ] || fail "~/.recall/config.example.json not seeded"
-[ ! -x "$HOME/.recall/README.md" ] || fail "~/.recall/README.md wrongly made executable"
+[ -x "$HOME/.recall/recall.py" ] || fail ".recall/recall.py not seeded/executable"
+[ -f "$HOME/.recall/config.example.json" ] || fail ".recall/config.example.json not seeded"
+[ ! -x "$HOME/.recall/README.md" ] || fail ".recall/README.md wrongly made executable"
 pass "hub wiring matches map"
 
 for catalog in .agents .codex .claude; do
@@ -127,7 +127,7 @@ printf '#!/usr/bin/env python3\n# MY CUSTOM RECALL EDIT\n' > "$HOME/.recall/reca
 "$REPO/setup/install.sh"
 grep -q "MY CUSTOM RECALL EDIT" "$HOME/.recall/recall.py" \
   || fail "install.sh clobbered a local ~/.recall/recall.py edit"
-pass "~/.recall divergence survives a re-run"
+pass ".recall divergence survives a re-run"
 
 echo
 echo "ALL FRESH-INSTALL CHECKS PASSED"
