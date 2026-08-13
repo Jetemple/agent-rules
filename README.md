@@ -30,7 +30,7 @@ load-point points back at this checkout.
 ```sh
 git clone git@github.com:Jetemple/agent-rules.git ~/.agent-rules   # or HTTPS
 cd ~/.agent-rules
-# read docs/setup.md first — prereqs (Homebrew, Python 3.13, Ollama) and the order
+# read docs/setup.md first — prereqs (Homebrew, Python 3.13, llama.cpp) and the order
 ./setup/install.sh --dry-run    # preview
 ./setup/install.sh              # create symlinks
 ./setup/doctor.sh               # verify
@@ -49,8 +49,8 @@ wrap ~/.private/wrap agents,codex,claude
 
 - **Superpowers** — a separate skills marketplace; several workflows here assume it is
   installed. This repo links it as a dependency, doesn't republish its skills.
-- **`embeddinggemma:300m`** — the Ollama embedding model `tools/recall` uses. Pull it per
-  `docs/memory-and-recall.md`.
+- **`embeddinggemma-300M` (GGUF)** — the embedding model `tools/recall` uses, served by
+  llama.cpp (`llama serve`). Pull it per step 3 of `docs/setup.md`.
 
 ## Platform
 

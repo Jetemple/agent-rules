@@ -3,7 +3,7 @@
 recall — tool-agnostic semantic memory recall over a notes corpus + agent memory.
 
 Engine : libSQL (native F32_BLOB vectors + brute-force vector_distance_cos) + FTS5.
-Embed  : Ollama `embeddinggemma` (768-d, fully offline).
+Embed  : llama.cpp `llama serve` `embeddinggemma` (768-d, fully offline).
 Recall : vector-only by default (see cmd_recall); --hybrid adds FTS5 + Reciprocal Rank
          Fusion, and FTS-only is the automatic fallback when the embedder is unreachable.
 Output : each hit is tagged by which arm matched — [V+K] both, [V] semantic only (the
@@ -39,8 +39,8 @@ _ensure_libsql()
 # ---- config -----------------------------------------------------------------
 HOME      = os.path.expanduser("~")
 DB_PATH   = os.path.join(HOME, ".recall", "memory.db")
-OLLAMA    = "http://localhost:11434/api/embeddings"
-MODEL     = "embeddinggemma:300m"
+EMBED_URL = os.environ.get("RECALL_EMBED_URL", "http://localhost:8080/v1/embeddings")
+MODEL     = os.environ.get("RECALL_EMBED_MODEL", "ggml-org/embeddinggemma-300M-GGUF:Q8_0")
 DIM       = 768
 CHUNK_MAX = 1100          # chars per chunk (soft)
 RRF_K     = 60            # reciprocal-rank-fusion constant
@@ -101,14 +101,18 @@ def embed(text, is_query, _tries=5):
     # EmbeddingGemma documented retrieval prompts
     prompt = (f"task: search result | query: {text}" if is_query
               else f"title: none | text: {text}")
-    body = json.dumps({"model": MODEL, "prompt": prompt}).encode()
+    body = json.dumps({"model": MODEL, "input": prompt}).encode()
     for attempt in range(_tries):
         try:
-            req = urllib.request.Request(OLLAMA, data=body,
+            req = urllib.request.Request(EMBED_URL, data=body,
                                          headers={"Content-Type": "application/json"})
             with urllib.request.urlopen(req, timeout=120) as r:
-                return json.load(r)["embedding"]
+                return json.load(r)["data"][0]["embedding"]
         except (urllib.error.URLError, ConnectionError, OSError) as e:
+            if isinstance(e, urllib.error.HTTPError) and 400 <= e.code < 500:
+                # permanent client error (bad model name / bad request): no retry
+                raise urllib.error.URLError(
+                    f"embedder rejected request ({e.code}): {e.read(200)!r}") from e
             if attempt == _tries - 1:
                 raise
             import time
@@ -223,7 +227,7 @@ def cmd_recall(q, k=5, pool=20, hybrid=False):
     # show pure vector beats RRF hybrid — keyword fusion drags near-miss files up
     # and pollutes the fused rank (e.g. near-duplicate topical memories). Pass
     # hybrid=True (--hybrid) to restore RRF for noisier/larger corpora.
-    # If Ollama is down/unreachable, degrade to FTS-only instead of crashing.
+    # If the embedder is down/unreachable, degrade to FTS-only instead of crashing.
     vec_ids = []
     try:
         qv = str(embed(q, is_query=True))

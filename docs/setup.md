@@ -6,8 +6,30 @@ Follow in order. An LLM on a fresh machine should be able to execute this top to
 1. **Homebrew** — https://brew.sh
 2. **Python 3.13** — `brew install python@3.13`. (Do NOT use 3.14: it lacks a prebuilt
    `libsql` wheel that `tools/recall` needs.)
-3. **Ollama** — `brew install ollama`, start the server (`brew services start ollama`, or
-   `ollama serve` in a spare terminal), then `ollama pull embeddinggemma:300m`.
+3. **llama.cpp** — `curl -LsSf https://llama.app/install.sh | sh` (official ggml-org
+   installer; or `brew install llama.cpp`), then
+   `llama download -hf ggml-org/embeddinggemma-300M-GGUF:Q8_0` and start the router
+   server: `llama serve --models-preset ~/.config/llama.cpp/presets.ini`, with this
+   minimal preset:
+
+   ```ini
+   version = 1
+
+   [ggml-org/embeddinggemma-300M-GGUF:Q8_0]
+   embeddings = true
+   load-on-startup = true
+   c = 2048
+   b = 2048
+   ub = 2048
+   ```
+
+   (`ub = 2048` matters: indexing embeds chunks longer than the 512-token default batch.)
+
+   **Migrating an existing index from another embedder** (e.g. Ollama): document vectors
+   embedded by a different runtime/quant live in a subtly different space than new query
+   vectors — recall silently degrades instead of erroring. After switching, run
+   `recall.py index --rebuild` on the machine that owns the DB (in shared-memory mode
+   that is the writer, which then republishes; readers just pick up the new snapshot).
 
 ## 2. Clone + install
 Clone into a dot folder in your home directory (e.g. `~/.agent-rules`), not a project/code

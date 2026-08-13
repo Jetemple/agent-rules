@@ -75,7 +75,7 @@ def main():
         t2=time.perf_counter()
         emb_t.append((t1-t0)*1000); db_t.append((t2-t1)*1000); tot_t.append((t2-t0)*1000)
     def pct(a,p): return sorted(a)[int(len(a)*p)]
-    print(f"embed (ollama):   p50={statistics.median(emb_t):6.1f}ms  p90={pct(emb_t,.9):6.1f}ms")
+    print(f"embed (llama.cpp):   p50={statistics.median(emb_t):6.1f}ms  p90={pct(emb_t,.9):6.1f}ms")
     print(f"db search (both): p50={statistics.median(db_t):6.1f}ms  p90={pct(db_t,.9):6.1f}ms")
     print(f"end-to-end:       p50={statistics.median(tot_t):6.1f}ms  p90={pct(tot_t,.9):6.1f}ms")
 
