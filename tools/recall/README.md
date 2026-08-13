@@ -2,7 +2,7 @@
 
 A tool-agnostic **semantic memory-recall CLI** over a personal markdown corpus. Ask a
 question in natural language; get back ranked `path:line` snippets from across the whole
-corpus, by meaning. Fully local (offline embeddings via Ollama), no framework, ~300 lines
+corpus, by meaning. Fully local (offline embeddings via llama.cpp's `llama serve`), no framework, ~300 lines
 of Python, one SQLite file.
 
 ```
@@ -22,7 +22,7 @@ Each hit is tagged with **V** = vector (semantic match), **K** = keyword (litera
 | `[K]` | keyword only | literal match; in default mode, seeing `[K]` means the embedder was down and recall fell back to keyword-only |
 
 In default (vector) mode every hit is at least `[V]`; `[K]`-only results appear only when
-Ollama is unreachable (automatic fallback) or in `--hybrid` mode.
+the embedding server is unreachable (automatic fallback) or in `--hybrid` mode.
 
 ## Usage
 
@@ -35,7 +35,8 @@ recall index --rebuild        # wipe + full reindex (after changing embed model)
 recall stats                  # file/chunk counts + db size
 ```
 
-Requires: Ollama running with `embeddinggemma:300m` pulled, and `python3 -m pip install libsql`.
+Requires: `llama serve` running with `ggml-org/embeddinggemma-300M-GGUF:Q8_0` downloaded
+(preset must set `embeddings = true`, `ub = 2048` for that model), and `python3 -m pip install libsql`.
 The `recall` shorthand is a shell alias — non-interactive callers (agents) must use the full
 `python3 .../recall.py` path.
 
@@ -45,7 +46,7 @@ Five small parts, no LangChain / Pinecone / cloud:
 
 | part | what it does |
 |---|---|
-| `embed()` | POST to local **Ollama** (`embeddinggemma`, 768-dim) → query/doc vector |
+| `embed()` | POST to local **llama-server** `/v1/embeddings` (`embeddinggemma`, 768-dim) → query/doc vector |
 | `chunk_md()` | split markdown into ~1100-char chunks on blank-line boundaries, track line numbers |
 | `connect()` | **SQLite/libSQL**: a `chunks` table with an `F32_BLOB(768)` vector column + an **FTS5** virtual table |
 | `cmd_index()` | walk files, sha1-hash each, **re-embed only changed files** (incremental) |
@@ -65,6 +66,11 @@ Corpus paths are **not** hardcoded. First run looks, in order, for:
 1. `~/.recall/config.json` (copy `config.example.json` and edit the paths)
 2. a `RECALL_SOURCES` env var (same JSON shape)
 3. a generic placeholder default (prints a hint to create `config.json`)
+
+The embedder endpoint/model are also overridable per machine:
+`RECALL_EMBED_URL` (default `http://localhost:8080/v1/embeddings`) and
+`RECALL_EMBED_MODEL` (default `ggml-org/embeddinggemma-300M-GGUF:Q8_0`).
+
 
 ```jsonc
 // ~/.recall/config.json
@@ -91,7 +97,7 @@ first run:
     python3 ~/.recall/recall.py "natural-language query"
 
 It returns ranked path:line snippets across the whole corpus. Open full files only when a
-snippet is insufficient. Requires Ollama; if it errors, fall back to grep.
+snippet is insufficient. Requires the embedding server; if it errors, fall back to grep.
 ```
 
 Which file: `AGENTS.md` is the cross-tool standard (Codex, OpenCode); `CLAUDE.md` / `GEMINI.md`
@@ -132,7 +138,7 @@ haystacks); recall found 14/30 queries grep missed entirely, none the reverse. R
 is the don't-know-the-file, whole-corpus lookup.
 
 **Efficiency** (`bench_efficiency.py`): ~449 tokens/query — break-even with reading the single
-correct file, ~106× smaller than the whole corpus; ~87 ms end-to-end (p50, mostly the Ollama
+correct file, ~106× smaller than the whole corpus; ~87 ms end-to-end (p50, mostly the embedder
 hop); 1.1 MB for 173 chunks.
 
 ## Design decisions
@@ -150,6 +156,6 @@ hop); 1.1 MB for 173 chunks.
 ## Limitations
 
 - Retrieval quality depends on chunking + embedder; chunking here is deliberately naive.
-- Ollama down → recall degrades to keyword-only (FTS) with a stderr warning, results tagged
-  `[K]`; indexing still requires Ollama (it must embed).
+- Embedder down → recall degrades to keyword-only (FTS) with a stderr warning, results tagged
+  `[K]`; indexing still requires the embedder (it must embed).
 - Single-corpus, single-machine. The DB is a per-machine cache.
