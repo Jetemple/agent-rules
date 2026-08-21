@@ -117,6 +117,27 @@ else
   done <<< "$workflow_output"
 fi
 
+echo "== prompt templates: each registry entry is linked into its runtime =="
+. "$REPO/setup/prompts.sh"
+prompt_output=""
+if ! prompt_output="$(prompt_entries "$REPO")"; then
+  echo "FAIL: prompt map is invalid; no prompt-template entries were checked." >&2
+  fail=1
+else
+  while read -r name source targets; do
+    [ -n "$name" ] || continue
+    prompt_targets=()
+    IFS=, read -r -a prompt_targets <<< "$targets"
+    for target in "${prompt_targets[@]}"; do
+      dir="$(prompt_target_dir "$target")"
+      if [ ! -d "$(dirname "$dir")" ]; then
+        echo "skip (not installed): $target ($dir)"; continue
+      fi
+      check_link "$dir/$name.md" "$REPO/$source"
+    done
+  done <<< "$prompt_output"
+fi
+
 echo "== claude: personal overlay imports the hub =="
 # Claude is special-cased (see map header): ~/.claude/AGENTS.md is a PERSONAL real file that
 # @imports core.md, and ~/.claude/CLAUDE.md symlinks to it.

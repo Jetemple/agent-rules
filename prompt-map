@@ -1,0 +1,4 @@
+# Prompt templates: runtime-specific slash-command prompts (NOT cross-runtime skills; those
+# live in workflow-map). Each row is linked as <name>.md into every listed target's prompt dir.
+# name  source           targets
+goal    prompts/goal.md  pi

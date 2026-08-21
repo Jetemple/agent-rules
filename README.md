@@ -13,7 +13,7 @@ tool's load-point back at the hub. Edit the hub once, every agent gets it. A new
 | path | what |
 |---|---|
 | `core.md` | the shared base rules every agent tool loads |
-| `map` / `workflow-map` | tool → load-point → hub-file; workflow → skill catalogs |
+| `map` / `workflow-map` / `prompt-map` | tool → load-point → hub-file; workflow → skill catalogs; prompt template → runtime prompt dir |
 | `AGENTS.md` | repo-local rules for working in this checkout (`CLAUDE.md` symlinks to it) |
 | `check-privacy.sh` | pre-commit privacy guard; identity patterns live outside the repo |
 | `docs/` | the manual: setup, memory & recall, compaction, model & quota, drift, custom providers |
@@ -44,6 +44,13 @@ the same name replaces the public one:
 ```text
 wrap ~/.private/wrap agents,codex,claude
 ```
+
+Runtime-specific slash-command prompt templates (Pi's `/goal`, for now) are registered in
+`prompt-map` and linked as `<name>.md` into the runtime's prompt directory
+(`pi` → `~/.pi/agent/prompts`). They stay separate from `workflow-map` because their
+invocation and interpolation syntax is runtime-specific. A pre-existing real file that is
+byte-identical to the repo copy is adopted (replaced by the link); a differing one is left
+alone and reported.
 
 ## Dependencies (not republished here)
 

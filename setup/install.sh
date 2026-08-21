@@ -130,6 +130,42 @@ while read -r origin name source targets; do
 done <<< "$workflow_output"
 
 echo
+echo "== prompt templates: link each registered template into its runtime's prompt dir =="
+. "$REPO/setup/prompts.sh"
+
+link_or_adopt() {  # link_or_adopt <abs-src> <dest> — like link(), but a byte-identical real file is adopted
+  local src="$1" dest="$2"
+  if [ -e "$dest" ] && [ ! -L "$dest" ]; then
+    if cmp -s "$src" "$dest"; then
+      echo "adopt (identical real file -> link): $dest -> $src"
+      [ "$DRY" -eq 1 ] || ln -sfn "$src" "$dest"
+    else
+      echo "REFUSE: $dest is a real file that differs from $src. Merge it into the repo or move it aside." >&2
+    fi
+    return
+  fi
+  link "$src" "$dest"
+}
+
+prompt_output=""
+if ! prompt_output="$(prompt_entries "$REPO")"; then
+  echo "REFUSE: prompt map is invalid; no prompt-template links were installed." >&2
+  exit 1
+fi
+while read -r name source targets; do
+  [ -n "$name" ] || continue
+  prompt_targets=()
+  IFS=, read -r -a prompt_targets <<< "$targets"
+  for target in "${prompt_targets[@]}"; do
+    dir="$(prompt_target_dir "$target")"
+    if [ ! -d "$(dirname "$dir")" ]; then   # runtime's config dir absent -> not installed
+      echo "skip (not installed): $target ($dir)"; continue
+    fi
+    link_or_adopt "$REPO/$source" "$dir/$name.md"
+  done
+done <<< "$prompt_output"
+
+echo
 echo "== claude: personal overlay (core-only stub if absent; never clobbered) =="
 CLAUDE_DIR="$HOME/.claude"
 if [ -d "$CLAUDE_DIR" ]; then

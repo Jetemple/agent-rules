@@ -34,7 +34,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Shellcheck (warning severity and up)
-        run: shellcheck -S warning check-privacy.sh setup/install.sh setup/doctor.sh setup/hooks/pre-commit setup/statusline.sh setup/test-compaction-config.sh setup/test-fresh-install.sh
+        run: shellcheck -S warning check-privacy.sh setup/install.sh setup/doctor.sh setup/workflows.sh setup/prompts.sh setup/hooks/pre-commit setup/statusline.sh setup/test-compaction-config.sh setup/test-fresh-install.sh
 
   config-contracts:
     runs-on: ubuntu-latest

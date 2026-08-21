@@ -19,7 +19,7 @@ REPO="$WORK/repo"
 cp -R "$REPO_SRC" "$REPO"
 export HOME="$WORK/home"
 export XDG_CONFIG_HOME="$HOME/.config"
-mkdir -p "$HOME/.claude" "$HOME/.codex" "$HOME/.gemini" "$HOME/.config/opencode"
+mkdir -p "$HOME/.claude" "$HOME/.codex" "$HOME/.gemini" "$HOME/.config/opencode" "$HOME/.pi/agent"
 mkdir -p "$HOME/.private/wrap" "$HOME/.config/agent-rules" "$HOME/.codex/skills/your-voice"
 printf '%s\n' 'wrap ~/.private/wrap agents,codex,claude' \
   > "$HOME/.config/agent-rules/workflow-map"
@@ -52,6 +52,35 @@ for catalog in .agents .codex .claude; do
     || fail "$catalog workflow link was partially installed from a malformed map"
 done
 pass "malformed private workflow map fails without partial workflow installation"
+
+echo "== malformed prompt map: refuse before installing any prompt-template links =="
+PROMPT_HOME="$WORK/prompt-home"
+PROMPT_REPO="$WORK/prompt-repo"
+cp -R "$REPO_SRC" "$PROMPT_REPO"
+mkdir -p "$PROMPT_HOME/.pi/agent" "$PROMPT_HOME/.claude"
+printf '%s\n' 'goal prompts/goal.md pi' 'bogus prompts/missing.md pi' > "$PROMPT_REPO/prompt-map"
+if HOME="$PROMPT_HOME" XDG_CONFIG_HOME="$PROMPT_HOME/.config" \
+  "$PROMPT_REPO/setup/install.sh" > "$WORK/prompt-install.log" 2>&1; then
+  fail "install.sh accepted a prompt map with a missing source"
+fi
+grep -qF "REFUSE: prompt map is invalid; no prompt-template links were installed." \
+  "$WORK/prompt-install.log" || fail "malformed prompt map refusal was not reported"
+[ ! -e "$PROMPT_HOME/.pi/agent/prompts/goal.md" ] \
+  || fail "goal prompt link was partially installed from a malformed map"
+if HOME="$PROMPT_HOME" XDG_CONFIG_HOME="$PROMPT_HOME/.config" \
+  "$PROMPT_REPO/setup/doctor.sh" > /dev/null 2>&1; then
+  fail "doctor.sh accepted a malformed prompt map"
+fi
+printf '%s\n' 'goal prompts/goal.md moon' > "$PROMPT_REPO/prompt-map"
+if HOME="$PROMPT_HOME" XDG_CONFIG_HOME="$PROMPT_HOME/.config" \
+  "$PROMPT_REPO/setup/install.sh" > /dev/null 2>&1; then
+  fail "install.sh accepted an unknown prompt target"
+fi
+pass "malformed prompt map fails without partial prompt installation"
+
+echo "== prompt templates: adopt an identical real file, preserve a differing one =="
+mkdir -p "$HOME/.pi/agent/prompts"
+cp "$REPO/prompts/goal.md" "$HOME/.pi/agent/prompts/goal.md"
 
 echo "== dry-run (must not touch anything) =="
 "$REPO/setup/install.sh" --dry-run
@@ -111,6 +140,33 @@ done
 [ -d "$HOME/.codex/skills/your-voice" ] && [ ! -L "$HOME/.codex/skills/your-voice" ] \
   || fail "real workflow destination was clobbered"
 pass "workflow links match the effective map without clobbering real destinations"
+
+[ "$(readlink "$HOME/.pi/agent/prompts/goal.md")" = "$REPO/prompts/goal.md" ] \
+  || fail "identical real goal.md was not adopted as a link"
+pass "identical real prompt file adopted as link"
+
+echo "== prompt templates: differing real file is preserved and reported =="
+rm "$HOME/.pi/agent/prompts/goal.md"
+printf 'MY LOCAL GOAL\n' > "$HOME/.pi/agent/prompts/goal.md"
+"$REPO/setup/install.sh" > "$WORK/divergent.log" 2>&1 || fail "install.sh failed on a divergent prompt file"
+grep -q 'REFUSE: .*goal.md is a real file that differs' "$WORK/divergent.log" \
+  || fail "divergent prompt file was not reported"
+grep -q "MY LOCAL GOAL" "$HOME/.pi/agent/prompts/goal.md" || fail "divergent prompt file was clobbered"
+[ ! -L "$HOME/.pi/agent/prompts/goal.md" ] || fail "divergent prompt file was replaced by a link"
+rm "$HOME/.pi/agent/prompts/goal.md"
+"$REPO/setup/install.sh" > /dev/null
+[ "$(readlink "$HOME/.pi/agent/prompts/goal.md")" = "$REPO/prompts/goal.md" ] \
+  || fail "fresh prompt link not created after the divergent file was moved aside"
+pass "divergent prompt file preserved; fresh install links it"
+
+echo "== doctor: reject a drifted or dangling prompt link and recover after repair =="
+ln -sfn "$REPO/core.md" "$HOME/.pi/agent/prompts/goal.md"
+if "$REPO/setup/doctor.sh" > /dev/null 2>&1; then fail "doctor accepted a wrong prompt link"; fi
+ln -sfn "$REPO/prompts/does-not-exist.md" "$HOME/.pi/agent/prompts/goal.md"
+if "$REPO/setup/doctor.sh" > /dev/null 2>&1; then fail "doctor accepted a dangling prompt link"; fi
+"$REPO/setup/install.sh" > /dev/null
+"$REPO/setup/doctor.sh" > /dev/null || fail "doctor remained unhealthy after prompt repair"
+pass "doctor detects prompt-link drift and installer repairs it"
 
 echo "== idempotency: re-running must not fail or change what's already correct =="
 "$REPO/setup/install.sh" || fail "second install.sh run failed"

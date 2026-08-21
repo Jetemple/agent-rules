@@ -43,16 +43,23 @@ git clone git@github.com:Jetemple/agent-rules.git ~/.agent-rules && cd ~/.agent-
 ./setup/install.sh             # create the home-level symlinks
 ```
 
-`install.sh` is idempotent and refuses to overwrite a real (non-symlink) file. It does four
+`install.sh` is idempotent and refuses to overwrite a real (non-symlink) file. It does six
 things:
 
 1. Reads `map` and symlinks each *installed* tool's global load-point at the hub file
    (e.g. `~/.codex/AGENTS.md` → `core.md`). Tools without a config dir are skipped.
-2. Special-cases Claude: creates a core-only `~/.claude/AGENTS.md` stub (with an
+2. Reads `workflow-map` (plus a private `~/.config/agent-rules/workflow-map` overlay) and
+   links each skill into every listed catalog (`~/.agents/skills`, `~/.codex/skills`,
+   `~/.claude/skills`). The whole map is validated first; a bad row installs nothing.
+3. Reads `prompt-map` and links each runtime-specific prompt template as `<name>.md` into
+   its runtime's prompt dir (`pi` → `~/.pi/agent/prompts`). A byte-identical real file is
+   adopted into a link; a differing one is left alone and reported. Validated whole, like
+   the workflow map.
+4. Special-cases Claude: creates a core-only `~/.claude/AGENTS.md` stub (with an
    `@…/core.md` import line) if absent, and links `~/.claude/CLAUDE.md` → `AGENTS.md`. An
    existing personal file is never touched.
-3. Installs the privacy-guard pre-commit hook.
-4. Creates a stub `~/.config/agent-rules/private-patterns` if absent — **edit it**: add your
+5. Installs the privacy-guard pre-commit hook.
+6. Creates a stub `~/.config/agent-rules/private-patterns` if absent — **edit it**: add your
    name, handles, and employer as regexes so `check-privacy.sh` blocks them from ever being
    committed. It lives outside the repo so the guard never encodes your identity.
 
