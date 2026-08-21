@@ -42,6 +42,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Verify compaction examples and shared continuity guidance
         run: bash setup/test-compaction-config.sh
+      - name: Verify workflow registry and skill frontmatter
+        run: bash setup/test-workflows.sh
 
   fresh-install:
     runs-on: ubuntu-latest

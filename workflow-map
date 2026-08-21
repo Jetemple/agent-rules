@@ -3,3 +3,4 @@ drain-memory  workflows/drain-memory    agents,codex,claude
 handoff       workflows/handoff         agents,codex,claude
 wrap          workflows/wrap            agents,codex,claude
 your-voice    workflows/your-voice      agents,codex,claude
+council       workflows/council         agents,codex,claude

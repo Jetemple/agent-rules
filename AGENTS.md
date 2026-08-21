@@ -24,7 +24,7 @@ each tool. This file layers only the repo-local rules on top. (`CLAUDE.md` symli
 - `docs/` — the manual: setup, memory & recall, compaction, model & quota, drift, codex
   custom providers.
 - `rules/` — composable rule snippets for project-level rules files.
-- `workflows/` — generic skills (`drain-memory`, `handoff`, `wrap`, `your-voice`).
+- `workflows/` — generic skills (`council`, `drain-memory`, `handoff`, `wrap`, `your-voice`).
 - `tools/recall/` — a semantic memory-recall CLI.
 
 ## Load Docs On Demand
