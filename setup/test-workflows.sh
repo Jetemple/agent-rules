@@ -8,6 +8,7 @@ trap 'rm -rf "$WORK"' EXIT
 REPO="$WORK/repo"
 HOME="$WORK/home"
 export HOME
+export XDG_CONFIG_HOME="$HOME/.config"
 mkdir -p "$REPO/setup" "$HOME/.config/agent-rules"
 cp "$REPO_SRC/setup/workflows.sh" "$REPO/setup/"
 printf '%s\n' \
@@ -30,7 +31,7 @@ private local ~/.private/local agents"
 [ "$(workflow_catalog codex)" = "$HOME/.codex/skills" ]
 [ "$(workflow_catalog claude)" = "$HOME/.claude/skills" ]
 
-while read -r name source targets; do
+while read -r name source _; do
   case "$name" in ''|\#*) continue ;; esac
   skill="$REPO_SRC/$source/SKILL.md"
   [ -f "$skill" ] || { echo "FAIL: missing registered skill: $skill" >&2; exit 1; }
