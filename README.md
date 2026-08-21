@@ -18,7 +18,7 @@ tool's load-point back at the hub. Edit the hub once, every agent gets it. A new
 | `check-privacy.sh` | pre-commit privacy guard; identity patterns live outside the repo |
 | `docs/` | the manual: setup, memory & recall, compaction, model & quota, drift, custom providers |
 | `rules/` | composable rule snippets |
-| `workflows/` | own generic skills (`drain-memory`, `handoff`, `wrap`, `your-voice`) |
+| `workflows/` | own generic skills (`council`, `drain-memory`, `handoff`, `wrap`, `your-voice`) |
 | `setup/` | `install.sh`, `doctor.sh`, example configs (macOS/zsh) |
 | `tools/recall/` | a semantic memory-recall CLI |
 
