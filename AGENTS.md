@@ -14,10 +14,20 @@ each tool. This file layers only the repo-local rules on top. (`CLAUDE.md` symli
 - **Generic means generic.** Paths as `~` or `$HOME`, examples anonymized. A rule that only
   makes sense with personal context belongs in a private overlay, not here.
 
+## Tests
+
+- Any test that fakes `$HOME` must also `export XDG_CONFIG_HOME="$HOME/.config"`. GitHub
+  runners export `XDG_CONFIG_HOME`, so a helper that reads `${XDG_CONFIG_HOME:-$HOME/.config}`
+  silently escapes the scratch home. This has broken CI twice (`0a012de`, `27a127f`).
+- Every registry (`map`, `workflow-map`, `prompt-map`) is validated whole before the installer
+  creates a single link. Keep it that way: a bad row installs nothing, never a partial set.
+
 ## Layout
 
 - `core.md` — the shared base every agent tool loads. Edit rules there.
 - `map` — tool → load-point → hub-file, the director. Add a tool = add a line.
+- `workflow-map` / `prompt-map` — cross-runtime skills → catalogs; runtime-specific prompt
+  templates (`prompts/`) → the runtime's prompt dir.
 - `check-privacy.sh` — privacy guard. Identity patterns live OUTSIDE the repo in
   `~/.config/agent-rules/private-patterns`, so the guard never encodes who you are.
 - `setup/` — `install.sh` (wires the map + hook), `doctor.sh` (verifies), statusline, hooks.
