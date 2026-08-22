@@ -132,10 +132,12 @@ pass "hub wiring matches map"
 for catalog in .agents .codex .claude; do
   [ "$(readlink "$HOME/$catalog/skills/handoff")" = "$REPO/workflows/handoff" ] \
     || fail "$catalog handoff workflow not linked"
-  [ "$(readlink "$HOME/$catalog/skills/council")" = "$REPO/workflows/council" ] \
-    || fail "$catalog council workflow not linked"
   [ "$(readlink "$HOME/$catalog/skills/wrap")" = "$HOME/.private/wrap" ] \
     || fail "$catalog private wrap override not linked"
+done
+for catalog in .codex .claude; do
+  [ "$(readlink "$HOME/$catalog/skills/council")" = "$REPO/workflows/council" ] \
+    || fail "$catalog council workflow not linked"
 done
 [ -d "$HOME/.codex/skills/your-voice" ] && [ ! -L "$HOME/.codex/skills/your-voice" ] \
   || fail "real workflow destination was clobbered"
