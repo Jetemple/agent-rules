@@ -183,8 +183,19 @@ else
   echo "warn: no ~/.config/agent-rules/private-patterns (guard runs generic checks only)"; notinstalled=1
 fi
 
-echo "== recall (skipped if not set up) =="
-check_seeded "$HOME/.recall/recall.py"
+echo "== recall (canonical code + device-local state) =="
+for f in recall.py recall requirements.txt README.md config.example.json \
+         bench_efficiency.py bench_quality.py bench_vs_grep.py bench_labels.example.json .gitignore; do
+  dest="$HOME/.recall/$f"
+  want="$REPO/tools/recall/$f"
+  if [ -L "$dest" ] && [ "$(readlink "$dest")" = "$want" ]; then
+    echo "ok: $dest -> $want"
+  elif [ -e "$dest" ] || [ -L "$dest" ]; then
+    echo "FAIL: $dest is not linked to canonical $want"; fail=1
+  else
+    echo "warn: $dest not linked (run ./setup/install.sh)"; notinstalled=1
+  fi
+done
 if [ -d "$HOME/.recall/.venv" ]; then echo "ok: recall venv present"
 else echo "warn: no ~/.recall/.venv (run the recall bootstrap in docs/setup.md)"; notinstalled=1; fi
 if [ -f "$HOME/.recall/config.json" ]; then echo "ok: ~/.recall/config.json present"

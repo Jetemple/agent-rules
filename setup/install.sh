@@ -207,10 +207,10 @@ echo "== statusline (optional; seeded once as a real file, not symlinked — mea
 copy_once "$REPO/setup/statusline.sh" "$HOME/.claude/statusline.sh"
 
 echo
-echo "== recall (optional; seeded once into ~/.recall — code lives outside the repo since it self-bootstraps a venv there and reads ~/.recall/config.json) =="
+echo "== recall (optional; canonical code linked into ~/.recall; venv/config/db stay device-local) =="
 for f in recall.py recall requirements.txt README.md config.example.json \
          bench_efficiency.py bench_quality.py bench_vs_grep.py bench_labels.example.json .gitignore; do
-  copy_once "$REPO/tools/recall/$f" "$HOME/.recall/$f"
+  link "$REPO/tools/recall/$f" "$HOME/.recall/$f"
 done
 
 echo

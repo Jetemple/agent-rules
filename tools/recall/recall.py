@@ -165,7 +165,9 @@ def iter_files():
         for dp, dirs, files in os.walk(root):
             dirs[:] = [d for d in dirs if d not in EXCLUDE_DIRS]
             for f in files:
-                if f.endswith(".md"):
+                # Individual notes are the source of truth. MEMORY.md is a legacy
+                # catalog that duplicates them and would pollute retrieval.
+                if f.endswith(".md") and f != "MEMORY.md":
                     yield source, os.path.join(dp, f)
 
 # ---- commands ---------------------------------------------------------------

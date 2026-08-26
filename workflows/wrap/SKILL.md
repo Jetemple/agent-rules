@@ -5,12 +5,10 @@ description: Use at the END of a session to capture durable facts — "/wrap", "
 
 # wrap
 
-> **Assumes a memory-corpus convention.** This workflow writes into a Markdown memory corpus
-> queried by `recall` (see `docs/memory-and-recall.md` and `tools/recall/`). It relies on a few
-> conventions that repo, not this skill, defines: a per-directory `MEMORY.md` index, a one-file-
-> per-fact frontmatter contract (`name` / `description` / `metadata.type` / `originSessionId`),
-> and a means of reindexing after a write. Set recall up first; if your corpus uses different
-> conventions, adapt the frontmatter and index steps below to match it.
+> **Assumes a recall-backed Markdown corpus.** Individual memory files are the source of truth;
+> recall's database is a derived search cache. This workflow relies on a one-file-per-fact
+> frontmatter contract (`name` / `description` / `metadata.type` / `originSessionId`) and a means
+> of reindexing after a write. A `MEMORY.md` catalog is neither required nor maintained.
 
 Session-end memory capture. The just-finished conversation is **already in your context** — no
 transcript mining needed. You **reflect on the session you just lived through**, pull out the few
@@ -34,9 +32,9 @@ for the small number of facts that will matter in a **future, unrelated session*
 - **Pointers to external resources** discovered this session (a dashboard, ticket,
   doc, CLI) → `reference`.
 
-**Be strict.** A high-quality miss beats a noisy hit. A short, focused session may
-yield **zero** — that's a perfectly good `/wrap` result. A long, dense one might
-yield 2–4. Rarely more.
+**Be strict.** A high-quality miss beats a noisy hit. **Zero is the normal result** for routine
+sessions. A long, unusually dense session might yield 1–3. More than 3 means the filter failed:
+stop and narrow the list before proposing it.
 
 ### Exclude (do NOT write)
 - Anything already in memory (dedup — see step 2).
@@ -60,21 +58,22 @@ part, you may read the **tail** of the current transcript to recover it, but the
 in-context summary is usually enough — don't burn tokens re-paging what you remember.
 
 ### 2. Dedup against existing memory
-For each candidate, check it isn't already captured. Fast path — query recall and
-skim the index:
+For each candidate, check it isn't already captured by querying recall:
 ```sh
 python3 ~/.recall/recall.py "the candidate fact in a few words" -k 3
 ```
 If a near-match comes back `[V+K]`/`[V]` at #1, it's likely already covered — drop
-it, or plan to *extend* that file rather than create a duplicate. Also glance at the
-relevant `MEMORY.md` section for the target dir.
+it, or plan to *extend* that file rather than create a duplicate. Do not read or update a
+`MEMORY.md` catalog for deduplication; recall searches the source files directly.
 
 ### 3. Propose before writing
 Present a short table — **slug · type · one-line · target dir · new-or-extends** —
 and for each, one line of *evidence* (the actual correction/decision, not your
 inference). Flag any marginal entry (thin, or already implied by CLAUDE.md) and
 recommend keep/drop. Ask the user to approve. **Honor their answer exactly** — never write
-a dropped one, never silently add one they didn't approve.
+a dropped one, never silently add one they didn't approve. Approval authorizes a qualifying
+memory write; it does not turn a repo-derived, transient, or otherwise excluded fact into a
+durable one.
 
 "Extends an existing file" is not its own justification — a candidate that would
 just append a status update (PR pushed, comment fixed, build green) to an existing
@@ -94,8 +93,8 @@ in-discipline (the "never persist from a throwaway/subagent run" rule is about
   not-yet-written memory is OK — it marks one worth writing).
 - Pick the memory dir that matches the current project (the matching project dir for
   project-specific facts, global for cross-project facts).
-- Add the one-line pointer to that dir's `MEMORY.md` under the right section
-  (`- [Title](file.md) — hook`). Never put memory *content* in MEMORY.md.
+- Write only the individual source file. **Never create, append to, or maintain `MEMORY.md`.**
+  recall indexes source files directly, so a second catalog duplicates content and grows stale.
 - To extend rather than duplicate, `Edit` the existing file instead.
 
 ### 5. Reindex, then spot-check

@@ -49,7 +49,7 @@ Five small parts, no LangChain / Pinecone / cloud:
 | `embed()` | POST to local **llama-server** `/v1/embeddings` (`embeddinggemma`, 768-dim) → query/doc vector |
 | `chunk_md()` | split markdown into ~1100-char chunks on blank-line boundaries, track line numbers |
 | `connect()` | **SQLite/libSQL**: a `chunks` table with an `F32_BLOB(768)` vector column + an **FTS5** virtual table |
-| `cmd_index()` | walk files, sha1-hash each, **re-embed only changed files** (incremental) |
+| `cmd_index()` | walk Markdown source files (excluding legacy `MEMORY.md` catalogs), sha1-hash each, **re-embed only changed files** (incremental) |
 | `cmd_recall()` | retrieval (below) |
 
 Retrieval is two SQL queries: a brute-force cosine scan
@@ -81,7 +81,8 @@ The embedder endpoint/model are also overridable per machine:
 ```
 
 `config.json` and `bench_labels.json` are gitignored (they describe a personal corpus); only
-the `.example` templates are tracked.
+the `.example` templates are tracked. Individual Markdown notes are the source of truth;
+`MEMORY.md` catalog files are skipped because they duplicate those notes and pollute retrieval.
 
 ## Agent integration
 
