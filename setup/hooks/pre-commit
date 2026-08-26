@@ -5,4 +5,11 @@ set -uo pipefail
 # .git/hooks/pre-commit is a symlink INTO the repo; resolve back to the repo root either way.
 REPO="$(git rev-parse --show-toplevel 2>/dev/null)"
 [ -z "$REPO" ] && REPO="$(cd "$(dirname "$0")/../.." && pwd)"
+
+# Optional private/local checks live outside this public repo. They run in addition to—not
+# instead of—the canonical privacy guard.
+EXTRA="${AGENT_RULES_PRE_COMMIT_EXTRA:-$HOME/.config/agent-rules/pre-commit-extra}"
+if [ -x "$EXTRA" ]; then
+  "$EXTRA" "$REPO" || exit $?
+fi
 exec "$REPO/check-privacy.sh"

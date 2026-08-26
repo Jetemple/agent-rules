@@ -1,7 +1,9 @@
 # Memory & recall
 
 `tools/recall` is a semantic search CLI over a Markdown **memory corpus** — notes an agent
-accumulates across sessions (decisions, gotchas, how-tos). It ranks by meaning, not just
+accumulates across sessions (decisions, gotchas, how-tos). Each individual Markdown note is a
+source-of-truth record. A separate `MEMORY.md` catalog is not required and is deliberately
+excluded from recall because it duplicates those records. recall ranks by meaning, not just
 keywords, so a natural-language question returns the relevant notes even when you don't know
 which file they live in. Usage, the `[V]`/`[K]` result tags, and benchmarks live in
 `tools/recall/README.md`; this page covers setup and maintenance.
@@ -18,9 +20,9 @@ fact answers.
 
 ## Setup
 
-`install.sh` seeds `~/.recall/recall.py` once (`copy_once`); it then diverges per-device, so
-repo updates don't auto-propagate — re-copy by hand if you want a repo-side fix. The venv +
-config + first-index bootstrap lives in `docs/setup.md` §3 — one place, don't duplicate it.
+`install.sh` links canonical recall code into `~/.recall`, so repo fixes propagate without a
+second copy. The venv, config, and database remain device-local. Bootstrap instructions live in
+`docs/setup.md` §3 — one place, don't duplicate them.
 
 Config is read from `~/.recall/config.json`, not the repo. The index (`~/.recall/memory.db`)
 is a **derived** SQLite/FTS cache — never commit it. Re-runs are incremental (only changed
@@ -35,7 +37,8 @@ the same authority as a current fact. Stale memory is worse than missing memory.
 Three jobs against the same corpus:
 
 - **Intake** (wrap / a corpus-mining workflow) — capture facts not yet written down.
-- **Consolidation** — calibrate index hooks, merge redundant clusters, fix broken `[[links]]`.
+- **Consolidation** — sharpen retrieval descriptions, merge redundant source files, and fix
+  broken `[[links]]`.
 - **Draining** (`workflows/drain-memory`) — reconcile against current reality: find facts time
   has falsified (lifecycle-complete work worded as in-flight, superseded version pins,
   point-in-time snapshots, internal contradictions) and delete/archive or refresh them.

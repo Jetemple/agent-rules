@@ -58,14 +58,17 @@ things:
 4. Special-cases Claude: creates a core-only `~/.claude/AGENTS.md` stub (with an
    `@…/core.md` import line) if absent, and links `~/.claude/CLAUDE.md` → `AGENTS.md`. An
    existing personal file is never touched.
-5. Installs the privacy-guard pre-commit hook.
+5. Installs the privacy-guard pre-commit hook. An executable
+   `~/.config/agent-rules/pre-commit-extra` may add private machine-specific checks; it runs
+   before, never instead of, the canonical guard.
 6. Creates a stub `~/.config/agent-rules/private-patterns` if absent — **edit it**: add your
    name, handles, and employer as regexes so `check-privacy.sh` blocks them from ever being
    committed. It lives outside the repo so the guard never encodes your identity.
 
 ## 3. recall corpus bootstrap
-`install.sh` seeds `~/.recall/recall.py` and friends once (a `copy_once` step). Build the
-venv there, not inside the repo checkout:
+`install.sh` links the canonical recall code and support files into `~/.recall`; the venv,
+`config.json`, and `memory.db` remain device-local. Build the venv under `~/.recall`, not inside
+the repo checkout:
 
 ```sh
 cd ~/.recall
@@ -80,10 +83,9 @@ The example config points at `~/notes/memory` and `~/notes/vault` — edit to yo
 dirs, or `mkdir -p ~/notes/memory` to start empty. The index does **not** auto-build on first
 query.
 
-Repo updates to `tools/recall/recall.py` do **not** propagate automatically — `~/.recall` is
-seeded once and left free to diverge per-device (same contract as `~/.claude/statusline.sh`).
-Re-copy by hand if you want a repo-side fix. `~/.recall/memory.db` is a derived index — never
-commit it.
+Repo updates to recall code propagate through the installed symlinks. Device-specific state
+(`.venv`, `config.json`, `memory.db`) remains under `~/.recall` and is never linked or committed.
+`memory.db` is a derived index.
 
 ## 4. Verify
 ```sh
