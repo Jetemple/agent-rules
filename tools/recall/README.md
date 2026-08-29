@@ -2,8 +2,8 @@
 
 A tool-agnostic **semantic memory-recall CLI** over a personal markdown corpus. Ask a
 question in natural language; get back ranked `path:line` snippets from across the whole
-corpus, by meaning. Fully local (offline embeddings via llama.cpp's `llama serve`), no framework, ~300 lines
-of Python, one SQLite file.
+corpus, by meaning. Fully local (offline embeddings via llama.cpp's `llama serve`), no framework, a few
+hundred lines of Python, one SQLite file.
 
 ```
 $ recall "why did we drop the legacy queue worker"
@@ -26,19 +26,67 @@ the embedding server is unreachable (automatic fallback) or in `--hybrid` mode.
 
 ## Usage
 
+The installed entry point is `~/.recall/recall.py` (a thin launcher; see
+[Runtime layout](#runtime-layout)). Full command set:
+
+```sh
+python3 ~/.recall/recall.py "natural-language query"   # ranked path:line + snippet
+python3 ~/.recall/recall.py "..." --hybrid             # RRF hybrid (vector+keyword)
+python3 ~/.recall/recall.py "..." --vector             # force vector even if config default is hybrid
+python3 ~/.recall/recall.py "..." -k 8                 # more hits (default 5)
+python3 ~/.recall/recall.py index                      # incremental reindex (only changed files re-embed)
+python3 ~/.recall/recall.py index --rebuild            # wipe + full reindex (after changing embed model)
+python3 ~/.recall/recall.py index --publish            # reindex, then publish a snapshot (writer only)
+python3 ~/.recall/recall.py publish                    # publish a fresh snapshot from the current db (writer only)
+python3 ~/.recall/recall.py add "durable fact" --title "short title"   # write a dated intake note
+python3 ~/.recall/recall.py stats                      # db path, role, retrieval mode, embedder, counts
 ```
-recall "your question"        # vector recall → path:line + snippet
-recall "..." --hybrid         # RRF hybrid (vector+keyword) — for noisier/larger corpora
-recall "..." -k 8             # more hits (default 5)
-recall index                  # incremental reindex (only changed files re-embed)
-recall index --rebuild        # wipe + full reindex (after changing embed model)
-recall stats                  # file/chunk counts + db size
-```
+
+`--vector` and `--hybrid` are mutually exclusive. The `recall` shorthand is an interactive
+shell alias only — non-interactive callers (agents) must use the full `python3 .../recall.py` path.
 
 Requires: `llama serve` running with `ggml-org/embeddinggemma-300M-GGUF:Q8_0` downloaded
 (preset must set `embeddings = true`, `ub = 2048` for that model), and `python3 -m pip install libsql`.
-The `recall` shorthand is a shell alias — non-interactive callers (agents) must use the full
-`python3 .../recall.py` path.
+
+### Reader, writer, and standalone roles
+
+One SQLite index can be shared across machines through a file-sync folder (Syncthing,
+Dropbox, etc.). Each machine plays one role, set by config:
+
+| role | config | indexes / publishes | `recall "query"` | `add` |
+|---|---|---|---|---|
+| **standalone** | default (no `read_only`, no `publish_path`) | yes, writes its own local db | yes | writes an intake note **and** reindexes locally |
+| **writer** | `publish_path` set | yes; `index --publish` / `publish` write a WAL-free snapshot into the sync folder | yes | intake note + local reindex; publish to share it |
+| **reader** | `read_only: true` | never — `index`, `--rebuild`, `publish` are refused | yes, against the synced snapshot (opened read-only) | writes the dated intake note only; **does not touch the reader database** (the writer picks the note up on its next index and the synced snapshot carries it back) |
+
+Exactly one machine in a shared set is the writer. Readers never `ALTER TABLE` or write the
+db, so they tolerate a snapshot published by an older or newer engine.
+
+### Source of truth and catalog files
+
+```text
+Individual Markdown notes are source records. memory.db is derived. MEMORY.md is
+excluded by default because catalogs commonly duplicate source notes. A project that
+has not migrated unique catalog-only content may temporarily set "exclude_files": []
+in its private config; migrate that content before restoring the default.
+```
+
+### Runtime layout
+
+`setup/install.sh` seeds `~/.recall/recall.py` **once** — and what it seeds is
+`tools/recall/launcher.py`, a stable launcher with no retrieval logic. The launcher locates
+the canonical engine at `tools/recall/recall.py` in the agent-rules checkout, re-execs under
+`~/.recall/.venv` when that venv exists, and hands off. So:
+
+- **fresh installs** get the launcher; engine fixes in the repo take effect immediately, no re-copy
+- **an existing `~/.recall/recall.py` is never overwritten** (`copy_once` refuses a populated target)
+- migrating a pre-launcher `~/.recall/recall.py` to the launcher is a deliberate gated step:
+  back up the current file, run the public engine's own tests, confirm retrieval parity against
+  the corpus's private benchmark, and get explicit owner approval before replacing it
+- set `AGENT_RULES_HOME` if the checkout is not at `~/.agent-rules`
+
+`~/.recall/` holds only device-local state after that: `config.json`, `.venv`, `memory.db`,
+and `bench_labels.json`. None of it is tracked or synced through Git.
 
 ## How it works
 
@@ -77,8 +125,16 @@ The embedder endpoint/model are also overridable per machine:
 { "sources": [
     { "label": "memory", "path": "~/notes/memory" },
     { "label": "vault",  "path": "~/notes/vault" }
-] }
+  ],
+  "retrieval_mode": "vector",   // "vector" (default) or "hybrid"
+  "read_only": false,           // true → reader: never indexes or publishes
+  "publish_path": null          // set on the writer → snapshot target in the sync folder
+}
 ```
+
+`retrieval_mode` sets the default ranker. Keep it `vector` unless this corpus's **own**
+private benchmark (`bench_quality.py` against the real `bench_labels.json`) shows `hybrid`
+winning on hit@k / MRR. A per-query `--vector` / `--hybrid` flag overrides it either way.
 
 `config.json` and `bench_labels.json` are gitignored (they describe a personal corpus); only
 the `.example` templates are tracked.
