@@ -44,6 +44,8 @@ jobs:
         run: bash setup/test-compaction-config.sh
       - name: Verify workflow registry and skill frontmatter
         run: bash setup/test-workflows.sh
+      - name: Verify recall engine contracts
+        run: python3 -m unittest discover -s tools/recall -p 'test_*.py' -v
 
   fresh-install:
     runs-on: ubuntu-latest
