@@ -184,13 +184,36 @@ else
 fi
 
 echo "== recall (skipped if not set up) =="
-check_seeded "$HOME/.recall/recall.py"
+# The public launcher gets a checksum check; private config/db never do.
+launcher="$HOME/.recall/recall.py"
+canonical_launcher="$REPO/tools/recall/launcher.py"
+if [ -x "$launcher" ] && cmp -s "$launcher" "$canonical_launcher"; then
+  echo "ok: recall launcher matches canonical launcher"
+elif [ -e "$launcher" ]; then
+  echo "warn: recall launcher/runtime differs; preserve it and run the documented migration gate"
+  notinstalled=1
+else
+  echo "warn: recall launcher absent (run ./setup/install.sh)"
+  notinstalled=1
+fi
+if [ -f "$REPO/tools/recall/recall.py" ]; then
+  echo "ok: canonical recall engine present"
+else
+  echo "FAIL: canonical recall engine missing"; fail=1
+fi
 if [ -d "$HOME/.recall/.venv" ]; then echo "ok: recall venv present"
 else echo "warn: no ~/.recall/.venv (run the recall bootstrap in docs/setup.md)"; notinstalled=1; fi
 if [ -f "$HOME/.recall/config.json" ]; then echo "ok: ~/.recall/config.json present"
 else echo "warn: no ~/.recall/config.json (copy config.example.json there)"; notinstalled=1; fi
-if [ -f "$HOME/.recall/memory.db" ]; then echo "ok: ~/.recall/memory.db index built"
-else echo "warn: no ~/.recall/memory.db (run: python3 ~/.recall/recall.py index)"; notinstalled=1; fi
+# Resolve the configured db_path (default ~/.recall/memory.db) without echoing
+# any other config value.
+recall_db="$HOME/.recall/memory.db"
+if [ -f "$HOME/.recall/config.json" ]; then
+  cfg_db=$(python3 -c 'import json,os,sys;d=json.load(open(sys.argv[1]));p=d.get("db_path");print(os.path.expanduser(p) if p else "")' "$HOME/.recall/config.json" 2>/dev/null || true)
+  [ -n "$cfg_db" ] && recall_db="$cfg_db"
+fi
+if [ -f "$recall_db" ]; then echo "ok: recall index built"
+else echo "warn: recall index not built (run: python3 ~/.recall/recall.py index)"; notinstalled=1; fi
 
 echo
 if [ "$fail" -ne 0 ]; then

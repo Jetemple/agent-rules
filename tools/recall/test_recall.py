@@ -1,4 +1,6 @@
+import contextlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -443,6 +445,11 @@ class RecallRankingTests(unittest.TestCase):
 
 
 class RecallAddTests(unittest.TestCase):
+    def setUp(self):
+        # cmd_add prints the created path to stdout by design; keep it out of the
+        # test runner output.
+        self.enterContext(contextlib.redirect_stdout(io.StringIO()))
+
     def _module(self, td, **extra):
         cfg = {"sources": [{"label": "notes", "path": str(Path(td) / "notes")}],
                "inbox": str(Path(td) / "notes" / "_inbox")}
@@ -576,3 +583,116 @@ class BenchPathMatchTests(unittest.TestCase):
             home_row = os.path.join(module.HOME, "notes", "career", "resume_facts.md")
             fallback = module._citation("notes", home_row, None)
             self.assertIn("career/resume_facts.md", fallback)
+
+
+def _fake_repo(root: Path, engine_body: str) -> Path:
+    eng_dir = root / "tools" / "recall"
+    eng_dir.mkdir(parents=True)
+    (eng_dir / "recall.py").write_text(engine_body, encoding="utf-8")
+    return root
+
+
+_ENGINE_MAIN = (
+    "import sys\n"
+    "def cmd_recall(*a, **k):\n"
+    "    return 'engine-ok'\n"
+    "SENTINEL = 42\n"
+    "if __name__ == '__main__':\n"
+    "    sys.stderr.write('ENGINE MAIN argv=%r\\n' % (sys.argv,))\n"
+)
+
+
+class LauncherMainTests(unittest.TestCase):
+    def _run_main(self, home: Path, repo: Path, argv=("stats",), extra_env=None):
+        env = {"HOME": str(home), "AGENT_RULES_HOME": str(repo)}
+        env.update(extra_env or {})
+        err = io.StringIO()
+        with mock.patch.dict(os.environ, env, clear=True), \
+             mock.patch.object(sys, "argv", ["recall.py", *argv]), \
+             contextlib.redirect_stderr(err), \
+             contextlib.redirect_stdout(io.StringIO()):
+            runpy.run_path(str(LAUNCHER), run_name="__main__")
+        return err.getvalue()
+
+    def test_missing_engine_exits_two_with_path(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td) / "home"
+            repo = Path(td) / "empty-repo"
+            home.mkdir()
+            repo.mkdir()
+            err = io.StringIO()
+            with mock.patch.dict(os.environ, {"HOME": str(home), "AGENT_RULES_HOME": str(repo)}, clear=True), \
+                 mock.patch.object(sys, "argv", ["recall.py", "stats"]), \
+                 contextlib.redirect_stderr(err):
+                with self.assertRaises(SystemExit) as raised:
+                    runpy.run_path(str(LAUNCHER), run_name="__main__")
+            self.assertEqual(raised.exception.code, 2)
+            self.assertIn(str(repo / "tools" / "recall" / "recall.py"), err.getvalue())
+
+    def test_reexecs_under_recall_venv_when_present(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td) / "home"
+            repo = _fake_repo(Path(td) / "repo", _ENGINE_MAIN)
+            venv_py = home / ".recall" / ".venv" / "bin" / "python3"
+            venv_py.parent.mkdir(parents=True)
+            venv_py.write_text("#!/bin/sh\n", encoding="utf-8")
+            with mock.patch("os.execv") as execv:
+                self._run_main(home, repo, argv=("index", "--publish"))
+            execv.assert_called_once()
+            called_py, call_argv = execv.call_args[0]
+            self.assertEqual(called_py, str(venv_py))
+            self.assertEqual(call_argv[1:], [str(repo / "tools" / "recall" / "recall.py"),
+                                             "index", "--publish"])
+
+    def test_reexecs_even_when_venv_python_is_symlink_to_base(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td) / "home"
+            repo = _fake_repo(Path(td) / "repo", _ENGINE_MAIN)
+            bindir = home / ".recall" / ".venv" / "bin"
+            bindir.mkdir(parents=True)
+            (bindir / "python3").symlink_to(sys.executable)  # venv python -> base
+            with mock.patch("os.execv") as execv:
+                self._run_main(home, repo)
+            execv.assert_called_once()
+
+    def test_no_recursion_when_prefix_is_recall_venv(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td) / "home"
+            repo = _fake_repo(Path(td) / "repo", _ENGINE_MAIN)
+            venv_root = home / ".recall" / ".venv"
+            (venv_root / "bin").mkdir(parents=True)
+            (venv_root / "bin" / "python3").write_text("#!/bin/sh\n", encoding="utf-8")
+            with mock.patch("os.execv") as execv, \
+                 mock.patch.object(sys, "prefix", str(venv_root)):
+                err = self._run_main(home, repo)
+            execv.assert_not_called()
+            self.assertIn("ENGINE MAIN", err)  # ran the engine in-process instead
+
+    def test_agent_rules_home_selects_engine_root(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td) / "home"
+            home.mkdir()
+            repo = _fake_repo(Path(td) / "custom", _ENGINE_MAIN)
+            with mock.patch("os.execv"):
+                err = self._run_main(home, repo)
+            self.assertIn("ENGINE MAIN", err)
+
+
+class LauncherImportTests(unittest.TestCase):
+    def test_import_exports_engine_namespace_without_running_cli(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td) / "home"
+            home.mkdir()
+            repo = _fake_repo(Path(td) / "repo", _ENGINE_MAIN)
+            name = f"launcher_test_{uuid.uuid4().hex}"
+            spec = importlib.util.spec_from_file_location(name, LAUNCHER)
+            module = importlib.util.module_from_spec(spec)
+            err = io.StringIO()
+            with mock.patch.dict(os.environ,
+                                 {"HOME": str(home), "AGENT_RULES_HOME": str(repo)}, clear=True), \
+                 contextlib.redirect_stderr(err):
+                assert spec.loader is not None
+                spec.loader.exec_module(module)
+            self.assertEqual(module.cmd_recall(), "engine-ok")
+            self.assertEqual(module.SENTINEL, 42)
+            self.assertNotIn("ENGINE MAIN", err.getvalue())
