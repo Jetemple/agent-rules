@@ -182,12 +182,26 @@ grep -q "MY CUSTOM STATUSLINE" "$HOME/.claude/statusline.sh" \
   || fail "install.sh clobbered a local statusline.sh edit"
 pass "statusline.sh divergence survives a re-run"
 
-echo "== recall is seeded ONCE then left alone (must survive a re-run untouched) =="
-printf '#!/usr/bin/env python3\n# MY CUSTOM RECALL EDIT\n' > "$HOME/.recall/recall.py"
+echo "== recall: installed ~/.recall/recall.py is the canonical launcher, not a copied engine =="
+cmp -s "$HOME/.recall/recall.py" "$REPO/tools/recall/launcher.py" \
+  || fail "installed ~/.recall/recall.py is not the canonical launcher"
+[ -f "$REPO/tools/recall/recall.py" ] \
+  || fail "canonical recall engine missing from the repo"
+grep -qF "canonical engine not found" "$HOME/.recall/recall.py" \
+  || fail "seeded ~/.recall/recall.py does not look like the launcher"
+pass "recall launcher seeded; canonical engine stays in the repo"
+
+echo "== recall: a deliberate launcher-local edit survives a re-run and doctor warns without overwriting =="
+printf '#!/usr/bin/env python3\n# MY CUSTOM RECALL LAUNCHER EDIT\n' > "$HOME/.recall/recall.py"
 "$REPO/setup/install.sh"
-grep -q "MY CUSTOM RECALL EDIT" "$HOME/.recall/recall.py" \
+grep -q "MY CUSTOM RECALL LAUNCHER EDIT" "$HOME/.recall/recall.py" \
   || fail "install.sh clobbered a local ~/.recall/recall.py edit"
-pass ".recall divergence survives a re-run"
+recall_doctor="$("$REPO/setup/doctor.sh")" || fail "doctor.sh FAILed on an edited launcher"
+printf '%s\n' "$recall_doctor" | grep -qF "recall launcher/runtime differs" \
+  || fail "doctor did not warn about the diverged launcher"
+grep -q "MY CUSTOM RECALL LAUNCHER EDIT" "$HOME/.recall/recall.py" \
+  || fail "doctor overwrote the diverged launcher"
+pass "diverged launcher preserved; doctor warns, installer never adopts it"
 
 echo
 echo "ALL FRESH-INSTALL CHECKS PASSED"
