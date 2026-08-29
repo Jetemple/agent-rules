@@ -21,7 +21,7 @@ Usage:
 Both Codex and Claude just shell out:  recall.py "how do I rebuild the index"
 """
 import os, sys, json, hashlib, urllib.request, urllib.error, argparse, textwrap, sqlite3
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 # ---- config -----------------------------------------------------------------
 # The engine stays importable with no third-party deps (unit tests exercise
@@ -59,6 +59,13 @@ DEFAULT_SOURCES = [
 def _expand(path):
     return os.path.expanduser(path) if path else path
 
+def _env(name):
+    """An env override, with empty string treated as unset. Templated launchers
+    (launchd, cron, wrappers) routinely export RECALL_* as "" — that must not
+    silently override config.json (e.g. flipping a reader into a writer)."""
+    value = os.environ.get(name)
+    return value if value else None
+
 def _boolean(value, field):
     if isinstance(value, bool):
         return value
@@ -78,10 +85,15 @@ def _string_list(value, default):
 
 def _parse_sources(obj):
     """Turn a {"sources":[{"label","path"}]} JSON object into [(label, path)]."""
+    raw_sources = obj.get("sources", [])
+    if not isinstance(raw_sources, list):
+        raise ValueError("sources must be a list of {label, path} objects")
     out = []
-    for s in obj.get("sources", []):
-        label = s.get("label")
-        path = s.get("path")
+    for entry in raw_sources:
+        if not isinstance(entry, dict):
+            raise ValueError("each sources entry must be a {label, path} object")
+        label = entry.get("label")
+        path = entry.get("path")
         if label and path:
             out.append((label, os.path.expanduser(path)))
     return out
@@ -99,25 +111,27 @@ def load_config():
     if not sources:
         sources = [(label, _expand(path)) for label, path in DEFAULT_SOURCES]
 
-    retrieval_mode = os.environ.get(
-        "RECALL_RETRIEVAL_MODE", raw.get("retrieval_mode", "vector")
+    retrieval_mode = (
+        _env("RECALL_RETRIEVAL_MODE") or raw.get("retrieval_mode") or "vector"
     ).strip().lower()
     if retrieval_mode not in {"vector", "hybrid"}:
         raise ValueError("retrieval_mode must be 'vector' or 'hybrid'")
 
+    read_only_raw = _env("RECALL_READONLY")
+    if read_only_raw is None:
+        read_only_raw = raw.get("read_only", False)
+
     return {
         "sources": sources,
-        "db_path": _expand(os.environ.get("RECALL_DB") or raw.get("db_path")
+        "db_path": _expand(_env("RECALL_DB") or raw.get("db_path")
                            or os.path.join(HOME, ".recall", "memory.db")),
-        "publish_path": _expand(os.environ.get("RECALL_PUBLISH") or raw.get("publish_path")),
-        "read_only": _boolean(
-            os.environ.get("RECALL_READONLY", raw.get("read_only", False)), "read_only"
-        ),
+        "publish_path": _expand(_env("RECALL_PUBLISH") or raw.get("publish_path")),
+        "read_only": _boolean(read_only_raw, "read_only"),
         "inbox": _expand(raw.get("inbox")) or os.path.join(sources[0][1], "_inbox"),
         "retrieval_mode": retrieval_mode,
         "exclude_files": set(_string_list(raw.get("exclude_files"), ["MEMORY.md"])),
-        "embed_url": os.environ.get("RECALL_EMBED_URL", raw.get("embed_url", "http://localhost:8080/v1/embeddings")),
-        "embed_model": os.environ.get("RECALL_EMBED_MODEL", raw.get("embed_model", "ggml-org/embeddinggemma-300M-GGUF:Q8_0")),
+        "embed_url": _env("RECALL_EMBED_URL") or raw.get("embed_url") or "http://localhost:8080/v1/embeddings",
+        "embed_model": _env("RECALL_EMBED_MODEL") or raw.get("embed_model") or "ggml-org/embeddinggemma-300M-GGUF:Q8_0",
     }
 
 try:
@@ -192,7 +206,9 @@ def connect(read_only=None):
     import libsql
     reader = READ_ONLY if read_only is None else read_only
     if reader:
-        connection = libsql.connect(f"file:{DB_PATH}?mode=ro", _uri=True)
+        # quote the path: an unescaped '#' or '?' in DB_PATH would silently
+        # truncate the URI and open (or miss) the wrong database.
+        connection = libsql.connect(f"file:{quote(DB_PATH)}?mode=ro", _uri=True)
         return connection, connection.cursor()
 
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
@@ -418,7 +434,11 @@ def fts_query(q):
 def _fts_ids(cur, q, pool):
     """Keyword recall that survives a damaged FTS5 rank: try ranked, then
     unranked, then give up cleanly. FTS auxiliary metadata can be corrupted
-    independently of the postings; keyword recall should degrade, not crash."""
+    independently of the postings; keyword recall should degrade, not crash.
+
+    Both `ValueError` and `sqlite3.DatabaseError` are caught on purpose: the
+    libsql build raises `ValueError` for DB-level errors, stock sqlite3 raises
+    `DatabaseError`. Do not narrow this to one of them."""
     try:
         cur.execute("SELECT rowid FROM fts WHERE fts MATCH ? ORDER BY rank LIMIT ?",
                     (fts_query(q), pool))

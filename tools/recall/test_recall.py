@@ -92,6 +92,30 @@ class RecallConfigTests(unittest.TestCase):
                     "read_only": "maybe",
                 })
 
+    def test_empty_env_override_does_not_flip_reader_to_writer(self):
+        with tempfile.TemporaryDirectory() as td:
+            module = load_engine(Path(td), {
+                "sources": [{"label": "notes", "path": "~/notes"}],
+                "read_only": True,
+            }, {
+                "RECALL_READONLY": "",
+                "RECALL_RETRIEVAL_MODE": "",
+                "RECALL_EMBED_URL": "",
+            })
+            self.assertTrue(module.CFG["read_only"])
+            self.assertEqual(module.CFG["retrieval_mode"], "vector")
+            self.assertEqual(module.EMBED_URL, "http://localhost:8080/v1/embeddings")
+
+    def test_non_list_sources_fails_closed(self):
+        with tempfile.TemporaryDirectory() as td:
+            with self.assertRaisesRegex(ValueError, "sources"):
+                load_engine(Path(td), {"sources": "~/notes"})
+
+    def test_scalar_sources_entry_fails_closed(self):
+        with tempfile.TemporaryDirectory() as td:
+            with self.assertRaisesRegex(ValueError, "sources"):
+                load_engine(Path(td), {"sources": ["~/notes"]})
+
 
 class RecallCorpusTests(unittest.TestCase):
     def test_iter_files_excludes_memory_catalog_by_default(self):
