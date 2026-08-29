@@ -180,23 +180,45 @@ def chunk_md(text):
     return chunks
 
 # ---- db ---------------------------------------------------------------------
-def connect():
+def connect(read_only=None):
+    """Open the DB. Readers open the synced snapshot read-only and never create
+    or alter schema; writers create the schema if missing and migrate the `rel`
+    column idempotently by inspecting the table first (so a genuine database
+    error still propagates instead of being swallowed by a blanket except)."""
     import libsql
+    reader = READ_ONLY if read_only is None else read_only
+    if reader:
+        connection = libsql.connect(f"file:{DB_PATH}?mode=ro", _uri=True)
+        return connection, connection.cursor()
+
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    con = libsql.connect(DB_PATH)
-    cur = con.cursor()
-    cur.execute(f"""CREATE TABLE IF NOT EXISTS chunks(
-        id INTEGER PRIMARY KEY, source TEXT, path TEXT, line INTEGER,
+    connection = libsql.connect(DB_PATH)
+    cursor = connection.cursor()
+    cursor.execute(f"""CREATE TABLE IF NOT EXISTS chunks(
+        id INTEGER PRIMARY KEY, source TEXT, path TEXT, rel TEXT, line INTEGER,
         txt TEXT, emb F32_BLOB({DIM}))""")
+    # `rel` (path relative to its source root) makes citations machine-portable;
+    # older DBs predate it. Inspect the schema, then add the column only if it is
+    # genuinely absent.
+    columns = {row[1] for row in cursor.execute("PRAGMA table_info(chunks)").fetchall()}
+    if "rel" not in columns:
+        cursor.execute("ALTER TABLE chunks ADD COLUMN rel TEXT")
     # No ANN index: corpus is small (<10k chunks), so a brute-force
     # vector_distance_cos scan is exact, sub-ms, and keeps the DB ~5MB
     # instead of ~155MB (DiskANN stores ~50 raw neighbor vectors/node).
-    cur.execute("""CREATE VIRTUAL TABLE IF NOT EXISTS fts
+    cursor.execute("""CREATE VIRTUAL TABLE IF NOT EXISTS fts
         USING fts5(txt, content='chunks', content_rowid='id')""")
-    cur.execute("""CREATE TABLE IF NOT EXISTS files(
-        path TEXT PRIMARY KEY, hash TEXT)""")
-    con.commit()
-    return con, cur
+    cursor.execute("CREATE TABLE IF NOT EXISTS files(path TEXT PRIMARY KEY, hash TEXT)")
+    connection.commit()
+    return connection, cursor
+
+
+def _chunks_has_rel(cursor):
+    return "rel" in {row[1] for row in cursor.execute("PRAGMA table_info(chunks)").fetchall()}
+
+
+def _chunk_select_columns(cursor):
+    return "source,path,rel,line,txt" if _chunks_has_rel(cursor) else "source,path,NULL AS rel,line,txt"
 
 def iter_files():
     for source, root in SOURCES:
@@ -209,38 +231,78 @@ def iter_files():
                     yield source, root, os.path.join(directory, name)
 
 # ---- commands ---------------------------------------------------------------
-def cmd_index(rebuild=False):
-    con, cur = connect()
-    if rebuild:
-        cur.execute("INSERT INTO fts(fts) VALUES('delete-all')")
-        cur.execute("DELETE FROM chunks")
-        cur.execute("DELETE FROM files")
-        con.commit()
+def _refuse_if_readonly(action):
+    if READ_ONLY:
+        print(f"recall: this machine is read_only; refusing to {action}. "
+              f"(Only the writer indexes/writes the shared DB.)", file=sys.stderr)
+        raise SystemExit(2)
+
+
+def _validate_source_roots():
+    """A missing configured root (e.g. an unmounted synced volume) must abort
+    before any stale-file deletion, not be silently treated as an empty corpus."""
+    missing = [(label, root) for label, root in SOURCES if not os.path.isdir(root)]
+    if missing:
+        for label, root in missing:
+            print(f"recall: source root missing for {label}: {root}", file=sys.stderr)
+        raise SystemExit(2)
+
+
+def _sql_literal(value):
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _yaml_scalar(value):
+    """JSON strings are valid YAML scalars, so this safely quotes frontmatter
+    values that contain colons, quotes, or leading punctuation."""
+    return json.dumps(str(value), ensure_ascii=False)
+
+
+def _citation(source, path, rel):
+    """Machine-portable citation: source-relative when the row has `rel`, else a
+    home-relative fallback for pre-migration rows."""
+    return f"{source}/{rel}" if rel else os.path.relpath(path, HOME)
+
+
+def _index_one_file(cur, source, root, path, raw, h):
+    """(Re)embed a single changed file. Returns the number of chunks embedded."""
+    rel = os.path.relpath(path, root)
+    cur.execute("SELECT id FROM chunks WHERE path=?", (path,))
+    for (cid,) in cur.fetchall():
+        cur.execute("DELETE FROM fts WHERE rowid=?", (cid,))
+    cur.execute("DELETE FROM chunks WHERE path=?", (path,))
+    n_chunks = 0
+    for start, body in chunk_md(raw):
+        v = embed(body, is_query=False)
+        cur.execute(
+            "INSERT INTO chunks(source,path,rel,line,txt,emb) VALUES (?,?,?,?,?,vector32(?))",
+            (source, path, rel, start, body, str(v)))
+        cid = cur.lastrowid
+        cur.execute("INSERT INTO fts(rowid,txt) VALUES (?,?)", (cid, body))
+        n_chunks += 1
+    cur.execute("INSERT OR REPLACE INTO files(path,hash) VALUES (?,?)", (path, h))
+    return n_chunks
+
+
+def _index_all_files(con, cur, commit_each):
+    """Walk the corpus, (re)index changed files, prune vanished ones.
+    Returns the count of changed files. When commit_each is true an incremental
+    run may commit after each changed file; a rebuild passes false so the caller
+    owns one atomic transaction."""
     seen, changed, n_chunks = set(), 0, 0
-    for source, path in iter_files():
+    for source, root, path in iter_files():
         seen.add(path)
-        raw = open(path, encoding="utf-8", errors="replace").read()
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            raw = handle.read()
         h = hashlib.sha1(raw.encode()).hexdigest()
         cur.execute("SELECT hash FROM files WHERE path=?", (path,))
         row = cur.fetchall()
         if row and row[0][0] == h:
             continue                       # unchanged -> skip (incremental)
         changed += 1
-        # purge old chunks for this file
-        cur.execute("SELECT id FROM chunks WHERE path=?", (path,))
-        for (cid,) in cur.fetchall():
-            cur.execute("DELETE FROM fts WHERE rowid=?", (cid,))
-        cur.execute("DELETE FROM chunks WHERE path=?", (path,))
-        for start, body in chunk_md(raw):
-            v = embed(body, is_query=False)
-            cur.execute(
-                "INSERT INTO chunks(source,path,line,txt,emb) VALUES (?,?,?,?,vector32(?))",
-                (source, path, start, body, str(v)))
-            cid = cur.lastrowid
-            cur.execute("INSERT INTO fts(rowid,txt) VALUES (?,?)", (cid, body))
-            n_chunks += 1
-        cur.execute("INSERT OR REPLACE INTO files(path,hash) VALUES (?,?)", (path, h))
-        con.commit()
+        n_chunks += _index_one_file(cur, source, root, path, raw, h)
+        if commit_each:
+            con.commit()
         print(f"  indexed {os.path.relpath(path, HOME)}", file=sys.stderr)
     # drop files that disappeared
     cur.execute("SELECT path FROM files")
@@ -251,8 +313,55 @@ def cmd_index(rebuild=False):
                 cur.execute("DELETE FROM fts WHERE rowid=?", (cid,))
             cur.execute("DELETE FROM chunks WHERE path=?", (p,))
             cur.execute("DELETE FROM files WHERE path=?", (p,))
-    con.commit()
     print(f"done. {changed} files changed, {n_chunks} chunks (re)embedded.", file=sys.stderr)
+    return changed
+
+
+def cmd_index(rebuild=False):
+    _refuse_if_readonly("index")
+    _validate_source_roots()
+    con, cur = connect()
+    if rebuild:
+        # One explicit transaction: an embedding, filesystem, or database
+        # interruption during a rebuild restores the previous index rather than
+        # leaving it half-wiped.
+        cur.execute("BEGIN IMMEDIATE")
+        try:
+            cur.execute("INSERT INTO fts(fts) VALUES (?)", ("delete-all",))
+            cur.execute("DELETE FROM chunks")
+            cur.execute("DELETE FROM files")
+            changed = _index_all_files(con, cur, commit_each=False)
+            con.commit()
+        except BaseException:
+            con.rollback()
+            raise
+        return changed
+    changed = _index_all_files(con, cur, commit_each=True)
+    con.commit()
+    return changed
+
+
+def cmd_publish():
+    """Publish a clean, WAL-free snapshot of the DB for Syncthing to replicate.
+    VACUUM INTO writes a fresh single file; os.replace makes it appear atomically
+    so readers (and Syncthing) never observe a half-written database. A failed
+    VACUUM INTO leaves the current published snapshot untouched."""
+    _refuse_if_readonly("publish")
+    if not PUBLISH_PATH:
+        print("recall: no publish_path configured. Set it in config.json on the "
+              "writer to enable shared-snapshot publishing.", file=sys.stderr)
+        raise SystemExit(2)
+    os.makedirs(os.path.dirname(PUBLISH_PATH), exist_ok=True)
+    temporary = PUBLISH_PATH + ".tmp"
+    if os.path.exists(temporary):
+        os.remove(temporary)               # VACUUM INTO requires a non-existent target
+    connection, cursor = connect()
+    cursor.execute(f"VACUUM INTO {_sql_literal(temporary)}")
+    connection.commit()
+    connection.close()
+    os.replace(temporary, PUBLISH_PATH)     # atomic publish
+    print(f"published snapshot -> {PUBLISH_PATH} "
+          f"({os.path.getsize(PUBLISH_PATH)//1024} KB)", file=sys.stderr)
 
 def fts_query(q):
     # safe FTS5: quote each alnum token, OR them
