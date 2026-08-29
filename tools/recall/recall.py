@@ -19,43 +19,58 @@ Both Codex and Claude just shell out:  recall.py "how do I rebuild the index"
 """
 import os, sys, json, hashlib, urllib.request, urllib.error, argparse, textwrap
 
-# ---- venv bootstrap ---------------------------------------------------------
-# libsql ships prebuilt wheels only for some CPython versions (3.13 here);
-# the system python3 may lack it. If libsql isn't importable, re-exec this
-# script under the project venv so the documented `python3 recall.py` path
-# works from any runtime (Claude, Codex, plain shell) without a wrapper.
-def _ensure_libsql():
-    try:
-        import libsql  # noqa: F401
-        return
-    except ImportError:
-        venv_py = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                               ".venv", "bin", "python3")
-        if os.path.exists(venv_py) and os.path.realpath(sys.executable) != os.path.realpath(venv_py):
-            os.execv(venv_py, [venv_py, os.path.abspath(__file__), *sys.argv[1:]])
-        raise
-_ensure_libsql()
-
 # ---- config -----------------------------------------------------------------
+# The engine stays importable with no third-party deps (unit tests exercise
+# config/corpus/formatting logic directly). `libsql` is imported lazily inside
+# connect(); virtualenv selection is the launcher's job, not the engine's.
 HOME      = os.path.expanduser("~")
-DB_PATH   = os.path.join(HOME, ".recall", "memory.db")
-EMBED_URL = os.environ.get("RECALL_EMBED_URL", "http://localhost:8080/v1/embeddings")
-MODEL     = os.environ.get("RECALL_EMBED_MODEL", "ggml-org/embeddinggemma-300M-GGUF:Q8_0")
 DIM       = 768
 CHUNK_MAX = 1100          # chars per chunk (soft)
 RRF_K     = 60            # reciprocal-rank-fusion constant
 
-# Corpus config is loaded at runtime, never hardcoded, so this file can be
+# Corpus + DB config is loaded at runtime, never hardcoded, so this file can be
 # shared/published without leaking personal paths. Priority order:
 #   1. ~/.recall/config.json  (gitignored; the owner's real paths)
-#   2. RECALL_SOURCES env var  (JSON: [{"label":..,"path":..}, ...])
+#   2. env vars  (RECALL_SOURCES / RECALL_DB / RECALL_PUBLISH / RECALL_READONLY /
+#                 RECALL_RETRIEVAL_MODE / RECALL_EMBED_URL / RECALL_EMBED_MODEL)
 #   3. a generic built-in default (+ a one-line hint to create config.json)
 # Copy config.example.json -> config.json and edit it to point at your corpus.
+#
+# config.json keys:
+#   sources         [{label, path}]  corpus roots to index (markdown)
+#   db_path         str   where THIS machine's DB lives (default ~/.recall/memory.db)
+#   publish_path    str   writer-only: where `publish` writes the synced snapshot
+#   read_only       bool  reader: open the DB read-only; refuse index/add/publish
+#   inbox           str   where `add` writes new notes (default <first source>/_inbox)
+#   retrieval_mode  str   "vector" (default, portable) or "hybrid" (RRF fusion)
+#   exclude_files   [str] basenames never indexed (default ["MEMORY.md"])
+#   embed_url       str   embeddings endpoint (OpenAI-compatible)
+#   embed_model     str   embeddings model id
 CONFIG_PATH = os.path.join(HOME, ".recall", "config.json")
 DEFAULT_SOURCES = [
     ("memory", os.path.join(HOME, "notes", "memory")),
     ("vault",  os.path.join(HOME, "notes", "vault")),
 ]
+
+def _expand(path):
+    return os.path.expanduser(path) if path else path
+
+def _boolean(value, field):
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off", ""}:
+        return False
+    raise ValueError(f"{field} must be a boolean value")
+
+def _string_list(value, default):
+    if value is None:
+        return list(default)
+    if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
+        raise ValueError("exclude_files must be a list of non-empty strings")
+    return value
 
 def _parse_sources(obj):
     """Turn a {"sources":[{"label","path"}]} JSON object into [(label, path)]."""
@@ -67,34 +82,59 @@ def _parse_sources(obj):
             out.append((label, os.path.expanduser(path)))
     return out
 
-def load_sources():
-    # 1. config.json
+def load_config():
+    raw = {}
     if os.path.exists(CONFIG_PATH):
-        try:
-            with open(CONFIG_PATH, encoding="utf-8") as f:
-                src = _parse_sources(json.load(f))
-            if src:
-                return src
-        except (json.JSONDecodeError, OSError) as e:
-            print(f"recall: could not read {CONFIG_PATH}: {e}", file=sys.stderr)
-    # 2. RECALL_SOURCES env var
-    env = os.environ.get("RECALL_SOURCES")
-    if env:
-        try:
-            src = _parse_sources(json.loads(env))
-            if src:
-                return src
-        except json.JSONDecodeError as e:
-            print(f"recall: could not parse RECALL_SOURCES: {e}", file=sys.stderr)
-    # 3. generic default + hint
-    print(f"recall: no config found; using placeholder paths. "
-          f"Create {CONFIG_PATH} (copy config.example.json) to point at your corpus.",
-          file=sys.stderr)
-    return [(label, os.path.expanduser(path)) for label, path in DEFAULT_SOURCES]
+        with open(CONFIG_PATH, encoding="utf-8") as handle:
+            raw = json.load(handle)
 
-SOURCES = load_sources()
-# Hard constitution rules: never index these.
-EXCLUDE_DIRS = {"_scratch", "_archive", ".git", "node_modules", ".obsidian"}
+    sources = _parse_sources(raw)
+    if not sources:
+        env_sources = os.environ.get("RECALL_SOURCES")
+        sources = _parse_sources(json.loads(env_sources)) if env_sources else []
+    if not sources:
+        sources = [(label, _expand(path)) for label, path in DEFAULT_SOURCES]
+
+    retrieval_mode = os.environ.get(
+        "RECALL_RETRIEVAL_MODE", raw.get("retrieval_mode", "vector")
+    ).strip().lower()
+    if retrieval_mode not in {"vector", "hybrid"}:
+        raise ValueError("retrieval_mode must be 'vector' or 'hybrid'")
+
+    return {
+        "sources": sources,
+        "db_path": _expand(os.environ.get("RECALL_DB") or raw.get("db_path")
+                           or os.path.join(HOME, ".recall", "memory.db")),
+        "publish_path": _expand(os.environ.get("RECALL_PUBLISH") or raw.get("publish_path")),
+        "read_only": _boolean(
+            os.environ.get("RECALL_READONLY", raw.get("read_only", False)), "read_only"
+        ),
+        "inbox": _expand(raw.get("inbox")) or os.path.join(sources[0][1], "_inbox"),
+        "retrieval_mode": retrieval_mode,
+        "exclude_files": set(_string_list(raw.get("exclude_files"), ["MEMORY.md"])),
+        "embed_url": os.environ.get("RECALL_EMBED_URL", raw.get("embed_url", "http://localhost:8080/v1/embeddings")),
+        "embed_model": os.environ.get("RECALL_EMBED_MODEL", raw.get("embed_model", "ggml-org/embeddinggemma-300M-GGUF:Q8_0")),
+    }
+
+try:
+    CFG = load_config()
+except (json.JSONDecodeError, OSError, ValueError) as error:
+    if __name__ == "__main__":
+        print(f"recall: invalid configuration: {error}", file=sys.stderr)
+        raise SystemExit(2)
+    raise
+
+SOURCES       = CFG["sources"]
+DB_PATH       = CFG["db_path"]
+PUBLISH_PATH  = CFG["publish_path"]
+READ_ONLY     = CFG["read_only"]
+RETRIEVAL_MODE = CFG["retrieval_mode"]
+EXCLUDE_FILES = CFG["exclude_files"]
+EMBED_URL     = CFG["embed_url"]
+MODEL         = CFG["embed_model"]
+# Hard constitution rules: never index these. `_recall` holds the published DB
+# snapshot (inside the synced folder); excluding it keeps the walk from touching it.
+EXCLUDE_DIRS = {"_scratch", "_archive", ".git", "node_modules", ".obsidian", "_recall"}
 
 # ---- embedding --------------------------------------------------------------
 def embed(text, is_query, _tries=5):
@@ -162,11 +202,11 @@ def iter_files():
     for source, root in SOURCES:
         if not os.path.isdir(root):
             continue
-        for dp, dirs, files in os.walk(root):
-            dirs[:] = [d for d in dirs if d not in EXCLUDE_DIRS]
-            for f in files:
-                if f.endswith(".md"):
-                    yield source, os.path.join(dp, f)
+        for directory, dirs, files in os.walk(root):
+            dirs[:] = [name for name in dirs if name not in EXCLUDE_DIRS]
+            for name in sorted(files):
+                if name.endswith(".md") and name not in EXCLUDE_FILES:
+                    yield source, root, os.path.join(directory, name)
 
 # ---- commands ---------------------------------------------------------------
 def cmd_index(rebuild=False):
