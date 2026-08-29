@@ -18,13 +18,22 @@ fact answers.
 
 ## Setup
 
-`install.sh` seeds `~/.recall/recall.py` once (`copy_once`); it then diverges per-device, so
-repo updates don't auto-propagate — re-copy by hand if you want a repo-side fix. The venv +
+`install.sh` seeds `~/.recall/recall.py` once (`copy_once`). What it seeds is
+`tools/recall/launcher.py` — a stable launcher that execs the canonical engine at
+`tools/recall/recall.py` in the checkout, so repo-side engine fixes propagate with no
+re-copy. Only `~/.recall/config.json`, `.venv`, and the index stay device-local. A
+pre-launcher `~/.recall/recall.py` is never overwritten; migrating it to the launcher is a
+gated step (backup, run the engine tests, confirm private-benchmark parity, explicit
+approval). Set `AGENT_RULES_HOME` if the checkout is not at `~/.agent-rules`. The venv +
 config + first-index bootstrap lives in `docs/setup.md` §3 — one place, don't duplicate it.
 
-Config is read from `~/.recall/config.json`, not the repo. The index (`~/.recall/memory.db`)
-is a **derived** SQLite/FTS cache — never commit it. Re-runs are incremental (only changed
-files re-embed) and purge files that have disappeared from the corpus.
+Config is read from `~/.recall/config.json`, not the repo. `retrieval_mode` there defaults to
+`vector`; switch a corpus to `hybrid` only when its own `bench_quality.py` run shows hybrid
+winning on hit@k / MRR. `read_only: true` makes a machine a reader (never indexes or
+publishes, queries a synced snapshot); `publish_path` makes it the writer. The index
+(`~/.recall/memory.db`) is a **derived** SQLite/FTS cache — never commit it. Re-runs are
+incremental (only changed files re-embed) and purge files that have disappeared from the
+corpus.
 
 ## Draining stale memory
 
