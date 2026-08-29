@@ -29,15 +29,27 @@ def load_labeled():
 # (query, expected path substring that identifies the correct note)
 LABELED = load_labeled()
 
+# A label may be a substring of either the absolute indexed path (pre-`rel` DBs)
+# or the portable `source/rel` citation the engine now prints. `_match_text`
+# concatenates both so existing private label files keep matching unchanged
+# whether or not the DB has been migrated to carry `rel`.
+def _match_text(source, path, rel):
+    return path + "\n" + recall._citation(source, path, rel)
+
+def _has_rel(cur):
+    return recall._chunks_has_rel(cur)
+
 def rank_vector(cur, q, n=POOL):
     qv = str(recall.embed(q, is_query=True))
-    cur.execute("SELECT id,path FROM chunks ORDER BY vector_distance_cos(emb, vector32(?)) LIMIT ?", (qv, n))
-    return cur.fetchall()  # [(id,path)] ordered
+    cols = "id,source,path,rel" if _has_rel(cur) else "id,source,path,NULL AS rel"
+    cur.execute(f"SELECT {cols} FROM chunks ORDER BY vector_distance_cos(emb, vector32(?)) LIMIT ?", (qv, n))
+    return [(i, _match_text(s, p, r)) for i, s, p, r in cur.fetchall()]  # [(id,matchtext)] ordered
 
 def rank_fts(cur, q, n=POOL):
-    cur.execute("SELECT c.id,c.path FROM fts JOIN chunks c ON c.id=fts.rowid WHERE fts MATCH ? ORDER BY rank LIMIT ?",
+    cols = "c.id,c.source,c.path,c.rel" if _has_rel(cur) else "c.id,c.source,c.path,NULL AS rel"
+    cur.execute(f"SELECT {cols} FROM fts JOIN chunks c ON c.id=fts.rowid WHERE fts MATCH ? ORDER BY rank LIMIT ?",
                 (recall.fts_query(q), n))
-    return cur.fetchall()
+    return [(i, _match_text(s, p, r)) for i, s, p, r in cur.fetchall()]
 
 def rank_hybrid(cur, q, n=POOL):
     vec = rank_vector(cur, q, n)
