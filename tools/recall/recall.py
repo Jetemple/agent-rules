@@ -4,20 +4,24 @@ recall — tool-agnostic semantic memory recall over a notes corpus + agent memo
 
 Engine : libSQL (native F32_BLOB vectors + brute-force vector_distance_cos) + FTS5.
 Embed  : llama.cpp `llama serve` `embeddinggemma` (768-d, fully offline).
-Recall : vector-only by default (see cmd_recall); --hybrid adds FTS5 + Reciprocal Rank
-         Fusion, and FTS-only is the automatic fallback when the embedder is unreachable.
+Recall : retrieval_mode config picks the default — "vector" (portable default) or
+         "hybrid" (FTS5 + Reciprocal Rank Fusion). --vector/--hybrid override per query.
+         FTS-only is the automatic fallback when the embedder is unreachable.
 Output : each hit is tagged by which arm matched — [V+K] both, [V] semantic only (the
          grep-can't-find-it case), [K] keyword only (or the embedder-down fallback).
 
 Usage:
   recall.py index            # incremental (only changed files) — run this before first query
   recall.py index --rebuild  # wipe + full reindex
-  recall.py "query text"     # vector recall, prints file:line + snippet
-  recall.py "query" --hybrid # RRF hybrid for noisier/larger corpora
+  recall.py "query text"     # recall in the configured mode, prints citation:line + snippet
+  recall.py "query" --hybrid # force RRF hybrid; --vector forces vector-only
+  recall.py add "a durable fact" --title "short title" [--publish]
+  recall.py publish          # writer-only: refresh the synced snapshot
   recall.py stats
 Both Codex and Claude just shell out:  recall.py "how do I rebuild the index"
 """
-import os, sys, json, hashlib, urllib.request, urllib.error, argparse, textwrap
+import os, sys, json, hashlib, urllib.request, urllib.error, argparse, textwrap, sqlite3
+from urllib.parse import urlsplit
 
 # ---- config -----------------------------------------------------------------
 # The engine stays importable with no third-party deps (unit tests exercise
@@ -363,37 +367,92 @@ def cmd_publish():
     print(f"published snapshot -> {PUBLISH_PATH} "
           f"({os.path.getsize(PUBLISH_PATH)//1024} KB)", file=sys.stderr)
 
+def cmd_add(text, source="cli", title=None, publish=False):
+    """Write a new memory as a markdown note into the synced corpus, then (on a
+    writer) index it. Writes are plain text — Syncthing merges them safely — so
+    ANY machine, reader or writer, may add. On a reader the note simply syncs to
+    the writer, which indexes it on its next pass. Provenance lives in YAML
+    frontmatter, quoted through `_yaml_scalar` so colons/quotes stay valid."""
+    text = (text or "").strip()
+    if not text:
+        print("recall: nothing to add (empty text).", file=sys.stderr)
+        raise SystemExit(2)
+    from datetime import datetime
+    inbox = CFG["inbox"]
+    os.makedirs(inbox, exist_ok=True)
+    now = datetime.now()
+    h = hashlib.sha1((text + now.isoformat()).encode()).hexdigest()[:6]
+    fp = os.path.join(inbox, f"{now:%Y%m%d-%H%M%S}-{h}.md")
+    fm = ["---", f"added: {now.isoformat(timespec='seconds')}",
+          f"source: {_yaml_scalar(source)}"]
+    if title:
+        fm.append(f"title: {_yaml_scalar(title)}")
+    fm.append("---")
+    body = "\n".join(fm) + "\n\n" + (f"# {title}\n\n" if title else "") + text + "\n"
+    # Always persist the note before touching the index: a later embed/schema
+    # failure must never lose the capture.
+    with open(fp, "w", encoding="utf-8") as handle:
+        handle.write(body)
+    shown = os.path.relpath(fp, HOME) if fp.startswith(HOME) else fp
+    print(f"added {shown}", file=sys.stderr)
+    if READ_ONLY:
+        print("recall: reader machine — note written to the synced corpus; the "
+              "writer indexes it on its next reindex.", file=sys.stderr)
+    else:
+        try:
+            cmd_index()
+        except (urllib.error.URLError, ConnectionError, OSError) as e:
+            print(f"recall: note saved; indexing deferred (embed unavailable: {e})",
+                  file=sys.stderr)
+        if publish:
+            cmd_publish()
+    print(fp)                                 # stdout: the path, for callers/agents
+    return fp
+
 def fts_query(q):
     # safe FTS5: quote each alnum token, OR them
     toks = ["".join(c for c in t if c.isalnum()) for t in q.split()]
     toks = [t for t in toks if len(t) > 1]
     return " OR ".join(f'"{t}"' for t in toks) or '""'
 
-def cmd_recall(q, k=5, pool=20, hybrid=False):
+def _fts_ids(cur, q, pool):
+    """Keyword recall that survives a damaged FTS5 rank: try ranked, then
+    unranked, then give up cleanly. FTS auxiliary metadata can be corrupted
+    independently of the postings; keyword recall should degrade, not crash."""
+    try:
+        cur.execute("SELECT rowid FROM fts WHERE fts MATCH ? ORDER BY rank LIMIT ?",
+                    (fts_query(q), pool))
+        return [r[0] for r in cur.fetchall()]
+    except (ValueError, sqlite3.DatabaseError) as e:
+        print(f"recall: keyword ranking unavailable ({e}); using unranked keywords.",
+              file=sys.stderr)
+    try:
+        cur.execute("SELECT rowid FROM fts WHERE fts MATCH ? LIMIT ?",
+                    (fts_query(q), pool))
+        return [r[0] for r in cur.fetchall()]
+    except (ValueError, sqlite3.DatabaseError) as e:
+        print(f"recall: keyword arm unavailable ({e}); semantic-only.", file=sys.stderr)
+        return []
+
+def cmd_recall(q, k=5, pool=20, mode=None):
     con, cur = connect()
-    # Default ranking is VECTOR-ONLY. On this short, semantically-distinct memory
-    # corpus, two benchmarks (bench_quality.py and the adversarial new-memory set)
-    # show pure vector beats RRF hybrid — keyword fusion drags near-miss files up
-    # and pollutes the fused rank (e.g. near-duplicate topical memories). Pass
-    # hybrid=True (--hybrid) to restore RRF for noisier/larger corpora.
-    # If the embedder is down/unreachable, degrade to FTS-only instead of crashing.
+    mode = (mode or RETRIEVAL_MODE)
+    # vector ranking: exact brute-force cosine scan (libSQL native fn). If the
+    # embedder is unreachable, degrade to keyword-only instead of crashing.
     vec_ids = []
     try:
         qv = str(embed(q, is_query=True))
-        # vector ranking: exact brute-force cosine scan (Turso native fn)
         cur.execute("""SELECT id FROM chunks
                        ORDER BY vector_distance_cos(emb, vector32(?)) LIMIT ?""", (qv, pool))
         vec_ids = [r[0] for r in cur.fetchall()]
     except (urllib.error.URLError, ConnectionError, OSError) as e:
         print(f"recall: embedder unavailable ({e}); falling back to keyword-only.",
               file=sys.stderr)
-    # keyword ranking (always computed: used for V+K tagging, hybrid fusion, and
-    # as the sole signal when the embedder is unavailable)
-    cur.execute(f"""SELECT rowid FROM fts WHERE fts MATCH ? ORDER BY rank LIMIT ?""",
-                (fts_query(q), pool))
-    fts_ids = [r[0] for r in cur.fetchall()]
-    if hybrid or not vec_ids:
-        # reciprocal rank fusion (or FTS-only when the embedder is down)
+    # keyword ranking is always computed: V+K tagging, hybrid fusion, and the sole
+    # signal when the embedder is down.
+    fts_ids = _fts_ids(cur, q, pool)
+    if mode == "hybrid" or not vec_ids:
+        # reciprocal rank fusion (or keyword-only when the embedder is down)
         scores = {}
         for rank, cid in enumerate(vec_ids):
             scores[cid] = scores.get(cid, 0) + 1.0 / (RRF_K + rank)
@@ -401,39 +460,75 @@ def cmd_recall(q, k=5, pool=20, hybrid=False):
             scores[cid] = scores.get(cid, 0) + 1.0 / (RRF_K + rank)
         top = sorted(scores, key=scores.get, reverse=True)[:k]
     else:
-        # vector-primary: rank by cosine, keep vector order intact
+        # vector mode: cosine order is authoritative
         top = vec_ids[:k]
     if not top:
         print("(no matches)")
         return
+    cols = _chunk_select_columns(cur)
     for cid in top:
-        cur.execute("SELECT source,path,line,txt FROM chunks WHERE id=?", (cid,))
-        source, path, line, txt = cur.fetchall()[0]
-        rel = os.path.relpath(path, HOME)
+        cur.execute(f"SELECT {cols} FROM chunks WHERE id=?", (cid,))
+        source, path, rel, line, txt = cur.fetchall()[0]
+        cite = _citation(source, path, rel)
         snippet = textwrap.shorten(txt.replace("\n", " "), width=280, placeholder=" …")
         tag = "V+K" if cid in vec_ids and cid in fts_ids else ("V" if cid in vec_ids else "K")
-        print(f"[{tag}] ~/{rel}:{line}\n    {snippet}\n")
+        print(f"[{tag}] {cite}:{line}\n    {snippet}\n")
+
+def _display_endpoint(url):
+    """Sanitized embedder endpoint for `stats`: scheme://host[:port]/path only.
+    Drops userinfo, query strings, and fragments so tokens never surface."""
+    parsed = urlsplit(url)
+    host = parsed.hostname or "unknown"
+    port = f":{parsed.port}" if parsed.port else ""
+    return f"{parsed.scheme}://{host}{port}{parsed.path}"
 
 def cmd_stats():
     con, cur = connect()
     cur.execute("SELECT COUNT(*),COUNT(DISTINCT path) FROM chunks")
     c, f = cur.fetchall()[0]
     sz = os.path.getsize(DB_PATH) if os.path.exists(DB_PATH) else 0
-    print(f"db={DB_PATH}\nfiles={f} chunks={c} size={sz/1024:.0f}KB")
+    role = "reader" if READ_ONLY else "writer"
+    print(f"db={DB_PATH}")
+    print(f"role={role}")
+    print(f"retrieval_mode={RETRIEVAL_MODE}")
+    print(f"embedder={_display_endpoint(EMBED_URL)}")
+    print(f"files={f} chunks={c} size={sz/1024:.0f}KB")
+    if PUBLISH_PATH:
+        pub_sz = os.path.getsize(PUBLISH_PATH) if os.path.exists(PUBLISH_PATH) else 0
+        print(f"publish_path={PUBLISH_PATH} ({pub_sz/1024:.0f}KB)")
 
 # ---- cli --------------------------------------------------------------------
-if __name__ == "__main__":
+def _cli(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd_or_query")
     ap.add_argument("rest", nargs="*")
     ap.add_argument("-k", type=int, default=5)
     ap.add_argument("--rebuild", action="store_true")
+    ap.add_argument("--vector", action="store_true",
+                    help="force vector-only ranking for this query")
     ap.add_argument("--hybrid", action="store_true",
-                    help="use RRF hybrid (vector+keyword) instead of the default vector-only ranking")
-    a = ap.parse_args()
-    if a.cmd_or_query == "index":
-        cmd_index(rebuild=a.rebuild)
-    elif a.cmd_or_query == "stats":
+                    help="force RRF hybrid (vector+keyword) ranking for this query")
+    ap.add_argument("--publish", action="store_true")
+    ap.add_argument("--source", default="cli")
+    ap.add_argument("--title")
+    args = ap.parse_args(argv)
+    if args.vector and args.hybrid:
+        ap.error("--vector and --hybrid are mutually exclusive")
+    mode = "vector" if args.vector else ("hybrid" if args.hybrid else None)
+
+    if args.cmd_or_query == "index":
+        changed = cmd_index(rebuild=args.rebuild)
+        if args.publish and (changed > 0 or args.rebuild):
+            cmd_publish()
+    elif args.cmd_or_query == "publish":
+        cmd_publish()
+    elif args.cmd_or_query == "add":
+        cmd_add(" ".join(args.rest), source=args.source, title=args.title, publish=args.publish)
+    elif args.cmd_or_query == "stats":
         cmd_stats()
     else:
-        cmd_recall(" ".join([a.cmd_or_query, *a.rest]), k=a.k, hybrid=a.hybrid)
+        cmd_recall(" ".join([args.cmd_or_query, *args.rest]), k=args.k, mode=mode)
+
+
+if __name__ == "__main__":
+    _cli()

@@ -313,3 +313,266 @@ class RecallDbTests(unittest.TestCase):
             # the only commit is connect()'s schema setup; the rebuild data
             # transaction is rolled back, never committed
             self.assertEqual(fake.last.committed, 1)
+
+
+class _RecallCursor:
+    """Minimal cursor for exercising cmd_recall ranking paths. Vector scan
+    returns vec_ids in order; FTS MATCH returns fts_ids; row lookups return a
+    synthetic chunk. `rank_raises` forces a damaged-rank FTS error once."""
+
+    def __init__(self, has_rel, vec_ids, fts_ids, rows, rank_raises=False):
+        self.has_rel = has_rel
+        self.vec_ids = vec_ids
+        self.fts_ids = fts_ids
+        self.rows = rows
+        self.rank_raises = rank_raises
+        self._result = []
+
+    def execute(self, sql, params=()):
+        s = " ".join(sql.lower().split())
+        if "pragma table_info(chunks)" in s:
+            cols = ["id", "source", "path", "line", "txt", "emb"]
+            if self.has_rel:
+                cols.insert(3, "rel")
+            self._result = [(i, n, "", 0, None, 0) for i, n in enumerate(cols)]
+        elif "order by vector_distance_cos" in s:
+            self._result = [(i,) for i in self.vec_ids]
+        elif "from fts where fts match" in s and "order by rank" in s:
+            if self.rank_raises:
+                self.rank_raises = False
+                raise __import__("sqlite3").DatabaseError("database disk image is malformed")
+            self._result = [(i,) for i in self.fts_ids]
+        elif "from fts where fts match" in s:
+            self._result = [(i,) for i in self.fts_ids]
+        elif "from chunks where id=?" in s:
+            self._result = [self.rows[params[0]]]
+        elif "count(*)" in s:
+            self._result = [(0, 0)]
+        else:
+            self._result = []
+        return self
+
+    def fetchall(self):
+        return self._result
+
+
+def _run_recall(module, cur, mode=None, embed_ok=True):
+    con = types.SimpleNamespace(cursor=lambda: cur)
+    embed = (mock.Mock(return_value=[0.0] * 768) if embed_ok
+             else mock.Mock(side_effect=OSError("embedder down")))
+    buf = []
+    with mock.patch.object(module, "connect", return_value=(con, cur)), \
+         mock.patch.object(module, "embed", embed), \
+         mock.patch("builtins.print", lambda *a, **k: buf.append(" ".join(str(x) for x in a))
+                    if k.get("file") is None else None):
+        module.cmd_recall("some query text", k=3, mode=mode)
+    return "\n".join(buf)
+
+
+class RecallRankingTests(unittest.TestCase):
+    def _module(self, td, mode):
+        return load_engine(Path(td), {
+            "sources": [{"label": "notes", "path": "~/notes"}],
+            "retrieval_mode": mode,
+        })
+
+    def _rows(self, ids, rel="folder/a.md"):
+        return {i: ("notes", "/machine/notes/folder/a.md", rel, 10, f"chunk {i} body")
+                for i in ids}
+
+    def test_configured_vector_mode_keeps_vector_order(self):
+        with tempfile.TemporaryDirectory() as td:
+            module = self._module(td, "vector")
+            cur = _RecallCursor(True, vec_ids=[5, 6, 7], fts_ids=[9, 6],
+                                rows=self._rows([5, 6, 7, 9]))
+            out = _run_recall(module, cur)
+            first_lines = [ln for ln in out.splitlines() if ln.startswith("[")]
+            # vector order 5,6,7 preserved; 9 (fts-only) excluded
+            self.assertEqual(len(first_lines), 3)
+            self.assertTrue(first_lines[0].startswith("[V+K]") or first_lines[0].startswith("[V]"))
+
+    def test_configured_hybrid_mode_uses_rrf(self):
+        with tempfile.TemporaryDirectory() as td:
+            module = self._module(td, "hybrid")
+            # 9 is fts-only but high FTS rank; hybrid must surface it
+            cur = _RecallCursor(True, vec_ids=[5, 6], fts_ids=[9, 5],
+                                rows=self._rows([5, 6, 9]))
+            out = _run_recall(module, cur)
+            self.assertIn("notes/folder/a.md:10", out)
+            self.assertIn("[K]", out)
+
+    def test_query_flag_overrides_configured_mode(self):
+        with tempfile.TemporaryDirectory() as td:
+            module = self._module(td, "vector")
+            cur = _RecallCursor(True, vec_ids=[1], fts_ids=[2, 1],
+                                rows=self._rows([1, 2]))
+            out = _run_recall(module, cur, mode="hybrid")
+            self.assertIn("[K]", out)  # fts-only doc 2 present under forced hybrid
+
+    def test_embedder_down_degrades_to_keyword_only(self):
+        with tempfile.TemporaryDirectory() as td:
+            module = self._module(td, "vector")
+            cur = _RecallCursor(True, vec_ids=[], fts_ids=[3, 4],
+                                rows=self._rows([3, 4]))
+            out = _run_recall(module, cur, embed_ok=False)
+            self.assertIn("[K]", out)
+            self.assertNotIn("[V", out)
+
+    def test_damaged_fts_rank_retries_unranked(self):
+        with tempfile.TemporaryDirectory() as td:
+            module = self._module(td, "hybrid")
+            cur = _RecallCursor(True, vec_ids=[1], fts_ids=[2],
+                                rows=self._rows([1, 2]), rank_raises=True)
+            out = _run_recall(module, cur)
+            self.assertIn("folder/a.md:10", out)
+
+    def test_both_arms_unavailable_prints_no_matches(self):
+        with tempfile.TemporaryDirectory() as td:
+            module = self._module(td, "vector")
+            cur = _RecallCursor(True, vec_ids=[], fts_ids=[], rows={})
+            out = _run_recall(module, cur, embed_ok=False)
+            self.assertIn("(no matches)", out)
+
+    def test_null_rel_uses_fallback_citation(self):
+        with tempfile.TemporaryDirectory() as td:
+            module = self._module(td, "vector")
+            rows = {1: ("notes", os.path.join(str(Path(td)), "notes", "a.md"), None, 4, "body")}
+            cur = _RecallCursor(False, vec_ids=[1], fts_ids=[], rows=rows)
+            out = _run_recall(module, cur)
+            self.assertIn("notes/a.md:4", out)
+
+
+class RecallAddTests(unittest.TestCase):
+    def _module(self, td, **extra):
+        cfg = {"sources": [{"label": "notes", "path": str(Path(td) / "notes")}],
+               "inbox": str(Path(td) / "notes" / "_inbox")}
+        cfg.update(extra)
+        return load_engine(Path(td), cfg)
+
+    def test_empty_text_exits_two(self):
+        with tempfile.TemporaryDirectory() as td:
+            module = self._module(td)
+            with self.assertRaises(SystemExit) as raised:
+                module.cmd_add("   ")
+            self.assertEqual(raised.exception.code, 2)
+
+    def test_reader_writes_note_and_never_indexes(self):
+        with tempfile.TemporaryDirectory() as td:
+            module = self._module(td, read_only=True)
+            with mock.patch.object(module, "cmd_index",
+                                   side_effect=AssertionError("reader must not index")):
+                path = module.cmd_add("a durable fact", source="cli")
+            self.assertTrue(os.path.exists(path))
+            self.assertEqual(len(list((Path(td) / "notes" / "_inbox").iterdir())), 1)
+
+    def test_writer_indexes_then_publishes_only_with_flag(self):
+        with tempfile.TemporaryDirectory() as td:
+            module = self._module(td, publish_path=str(Path(td) / "pub.db"))
+            with mock.patch.object(module, "cmd_index") as idx, \
+                 mock.patch.object(module, "cmd_publish") as pub:
+                module.cmd_add("fact one")
+                idx.assert_called_once()
+                pub.assert_not_called()
+                module.cmd_add("fact two", publish=True)
+                pub.assert_called_once()
+
+    def test_quoted_source_and_title_produce_valid_frontmatter(self):
+        with tempfile.TemporaryDirectory() as td:
+            module = self._module(td)
+            with mock.patch.object(module, "cmd_index"):
+                path = module.cmd_add("body", source='we: "x"', title='t: "y"')
+            text = Path(path).read_text(encoding="utf-8")
+            self.assertIn('source: "we: \\"x\\""', text)
+            self.assertIn('title: "t: \\"y\\""', text)
+
+    def test_note_saved_even_when_indexing_embed_fails(self):
+        with tempfile.TemporaryDirectory() as td:
+            module = self._module(td)
+            with mock.patch.object(module, "cmd_index",
+                                   side_effect=OSError("embedder down")):
+                path = module.cmd_add("resilient capture")
+            self.assertTrue(os.path.exists(path))
+
+
+class RecallDispatchTests(unittest.TestCase):
+    def _module(self, td):
+        return load_engine(Path(td), {"sources": [{"label": "n", "path": "~/n"}]})
+
+    def test_index_publish_only_when_changed_or_rebuild(self):
+        with tempfile.TemporaryDirectory() as td:
+            module = self._module(td)
+            with mock.patch.object(module, "cmd_index", return_value=0) as idx, \
+                 mock.patch.object(module, "cmd_publish") as pub:
+                module._cli(["index", "--publish"])
+                pub.assert_not_called()
+                idx.return_value = 3
+                module._cli(["index", "--publish"])
+                pub.assert_called_once()
+            with mock.patch.object(module, "cmd_index", return_value=0), \
+                 mock.patch.object(module, "cmd_publish") as pub:
+                module._cli(["index", "--rebuild", "--publish"])
+                pub.assert_called_once()
+
+    def test_add_forwards_every_argument(self):
+        with tempfile.TemporaryDirectory() as td:
+            module = self._module(td)
+            with mock.patch.object(module, "cmd_add") as add:
+                module._cli(["add", "some", "fact", "--title", "T", "--source", "chat", "--publish"])
+            add.assert_called_once_with("some fact", source="chat", title="T", publish=True)
+
+    def test_vector_flag_reaches_cmd_recall(self):
+        with tempfile.TemporaryDirectory() as td:
+            module = self._module(td)
+            with mock.patch.object(module, "cmd_recall") as rec:
+                module._cli(["what", "is", "this", "--vector"])
+            rec.assert_called_once_with("what is this", k=5, mode="vector")
+
+    def test_vector_and_hybrid_together_exit_two(self):
+        with tempfile.TemporaryDirectory() as td:
+            module = self._module(td)
+            with self.assertRaises(SystemExit) as raised:
+                module._cli(["q", "--vector", "--hybrid"])
+            self.assertEqual(raised.exception.code, 2)
+
+
+class RecallStatsTests(unittest.TestCase):
+    def test_stats_sanitizes_endpoint_and_reports_role_mode(self):
+        with tempfile.TemporaryDirectory() as td:
+            module = load_engine(Path(td), {
+                "sources": [{"label": "n", "path": "~/n"}],
+                "retrieval_mode": "hybrid",
+                "read_only": True,
+                "embed_url": "https://user:secret@embed.example.com:8443/v1/embeddings?token=abc#frag",
+            })
+            cur = _RecallCursor(True, [], [], {})
+            con = types.SimpleNamespace(cursor=lambda: cur)
+            buf = []
+            with mock.patch.object(module, "connect", return_value=(con, cur)), \
+                 mock.patch.object(module.os.path, "exists", return_value=False), \
+                 mock.patch("builtins.print", lambda *a, **k: buf.append(" ".join(str(x) for x in a))):
+                module.cmd_stats()
+            out = "\n".join(buf)
+            self.assertIn("role=reader", out)
+            self.assertIn("retrieval_mode=hybrid", out)
+            self.assertIn("embedder=https://embed.example.com:8443/v1/embeddings", out)
+            self.assertNotIn("secret", out)
+            self.assertNotIn("token=abc", out)
+            self.assertNotIn("frag", out)
+
+
+class BenchPathMatchTests(unittest.TestCase):
+    def test_benchmark_rows_and_citations_stay_path_matchable(self):
+        with tempfile.TemporaryDirectory() as td:
+            module = load_engine(Path(td), {"sources": [{"label": "notes", "path": "~/notes"}]})
+            # old-style benchmark row: (id, absolute path)
+            old_path = "/indexer/notes/career/resume_facts.md"
+            self.assertIn("career/resume_facts.md", old_path)
+            # engine citation row for the same chunk once `rel` exists
+            cite = module._citation("notes", old_path, "career/resume_facts.md")
+            self.assertEqual(cite, "notes/career/resume_facts.md")
+            match_text = old_path + "\n" + cite
+            self.assertIn("career/resume_facts.md", match_text)
+            # pre-rel row still matches via the home-relative fallback
+            home_row = os.path.join(module.HOME, "notes", "career", "resume_facts.md")
+            fallback = module._citation("notes", home_row, None)
+            self.assertIn("career/resume_facts.md", fallback)
