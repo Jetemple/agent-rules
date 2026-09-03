@@ -178,6 +178,54 @@ class RecallIntegrationTests(unittest.TestCase):
         still = self.run_cli("quantumsprocket")
         self.assertIn("notes/alpha/topic.md:", still.stdout)
 
+    def test_incremental_index_backfills_and_publishes_portable_paths(self):
+        self.run_cli("index")
+        connection = libsql.connect(str(self.db))
+        connection.execute("UPDATE chunks SET rel=NULL")
+        connection.commit()
+        connection.close()
+
+        # An unchanged corpus must upgrade path metadata without contacting the
+        # embedder, and must count that upgrade so --publish refreshes readers.
+        self.server.fail = True
+        self.run_cli("index", "--publish")
+        for database in (self.db, self.publish):
+            connection = libsql.connect(str(database))
+            missing = connection.execute(
+                "SELECT COUNT(*) FROM chunks WHERE rel IS NULL").fetchone()[0]
+            connection.close()
+            self.assertEqual(missing, 0)
+
+    def test_deletion_only_index_refreshes_published_snapshot(self):
+        self.run_cli("index", "--publish")
+        deleted = self.corpus / "beta" / "other.md"
+        deleted.unlink()
+
+        self.run_cli("index", "--publish")
+
+        connection = libsql.connect(str(self.publish))
+        remaining = connection.execute(
+            "SELECT COUNT(*) FROM chunks WHERE path=?", (str(deleted),)).fetchone()[0]
+        connection.close()
+        self.assertEqual(remaining, 0)
+
+    def test_index_publish_retries_when_writer_db_is_ahead(self):
+        self.run_cli("index", "--publish")
+        note = self.corpus / "alpha" / "topic.md"
+        note.write_text("# Topic\n\nNew retryable snapshot content.\n", encoding="utf-8")
+
+        # This models a successful index followed by a failed publish. The retry
+        # sees no corpus changes, but the writer DB is newer than the snapshot.
+        self.run_cli("index")
+        retry = self.run_cli("index", "--publish")
+        self.assertIn("published snapshot", retry.stderr)
+
+        connection = libsql.connect(str(self.publish))
+        text = connection.execute(
+            "SELECT txt FROM chunks WHERE path=?", (str(note),)).fetchone()[0]
+        connection.close()
+        self.assertIn("New retryable snapshot content", text)
+
 
 if __name__ == "__main__":
     unittest.main()
