@@ -32,6 +32,11 @@ DIM       = 768
 CHUNK_MAX = 1100          # chars per chunk (soft)
 RRF_K     = 60            # reciprocal-rank-fusion constant
 
+
+class EmbedUnavailable(RuntimeError):
+    """The local embedding service could not complete a request."""
+
+
 # Corpus + DB config is loaded at runtime, never hardcoded, so this file can be
 # shared/published without leaking personal paths. Priority order:
 #   1. ~/.recall/config.json  (gitignored; the owner's real paths)
@@ -44,7 +49,7 @@ RRF_K     = 60            # reciprocal-rank-fusion constant
 #   sources         [{label, path}]  corpus roots to index (markdown)
 #   db_path         str   where THIS machine's DB lives (default ~/.recall/memory.db)
 #   publish_path    str   writer-only: where `publish` writes the synced snapshot
-#   read_only       bool  reader: open the DB read-only; refuse index/add/publish
+#   read_only       bool  reader: open the DB read-only; refuse index/publish
 #   inbox           str   where `add` writes new notes (default <first source>/_inbox)
 #   retrieval_mode  str   "vector" (default, portable) or "hybrid" (RRF fusion)
 #   exclude_files   [str] basenames never indexed (default ["MEMORY.md"])
@@ -169,10 +174,10 @@ def embed(text, is_query, _tries=5):
         except (urllib.error.URLError, ConnectionError, OSError) as e:
             if isinstance(e, urllib.error.HTTPError) and 400 <= e.code < 500:
                 # permanent client error (bad model name / bad request): no retry
-                raise urllib.error.URLError(
+                raise EmbedUnavailable(
                     f"embedder rejected request ({e.code}): {e.read(200)!r}") from e
             if attempt == _tries - 1:
-                raise
+                raise EmbedUnavailable(str(e)) from e
             import time
             time.sleep(2 * (attempt + 1))   # backoff; rides out a server hiccup
 
@@ -244,7 +249,12 @@ def iter_files():
     for source, root in SOURCES:
         if not os.path.isdir(root):
             continue
-        for directory, dirs, files in os.walk(root):
+        # os.walk otherwise suppresses traversal failures and makes an unreadable
+        # subtree look deleted. Abort instead; stale-file pruning must only run
+        # after a complete corpus walk.
+        def raise_walk_error(error):
+            raise error
+        for directory, dirs, files in os.walk(root, onerror=raise_walk_error):
             dirs[:] = [name for name in dirs if name not in EXCLUDE_DIRS]
             for name in sorted(files):
                 if name.endswith(".md") and name not in EXCLUDE_FILES:
@@ -258,6 +268,20 @@ def _refuse_if_readonly(action):
         raise SystemExit(2)
 
 
+def _require_reader_snapshot():
+    """Guard the query path on a reader: the db is a synced snapshot the writer
+    publishes. If it has not landed yet (fresh reader, unmounted sync volume,
+    writer never published) libsql opening `mode=ro` surfaces an opaque driver
+    error; give a clear message instead. Standalone/writer machines create the
+    db on demand, so they skip this. `stats` deliberately does not call this —
+    it is the diagnostic you run to discover the snapshot is missing."""
+    if READ_ONLY and not os.path.exists(DB_PATH):
+        print(f"recall: no synced snapshot at {DB_PATH}. This is a reader; the "
+              f"writer must publish a snapshot (and file-sync must finish) "
+              f"before queries work.", file=sys.stderr)
+        raise SystemExit(2)
+
+
 def _validate_source_roots():
     """A missing configured root (e.g. an unmounted synced volume) must abort
     before any stale-file deletion, not be silently treated as an empty corpus."""
@@ -266,6 +290,34 @@ def _validate_source_roots():
         for label, root in missing:
             print(f"recall: source root missing for {label}: {root}", file=sys.stderr)
         raise SystemExit(2)
+
+
+def _require_indexed_inbox(inbox):
+    """Require intake notes to land somewhere the corpus walker can index."""
+    inbox = os.path.abspath(inbox)
+    for _, configured_root in SOURCES:
+        root = os.path.abspath(configured_root)
+        if not os.path.isdir(root):
+            continue
+        try:
+            relative = os.path.relpath(inbox, root)
+        except ValueError:  # different drives on platforms that support them
+            continue
+        if relative == os.pardir or relative.startswith(os.pardir + os.sep):
+            continue
+        parts = () if relative == os.curdir else relative.split(os.sep)
+        if any(part in EXCLUDE_DIRS for part in parts):
+            continue
+        # os.walk does not follow directory symlinks below a source root. Reject
+        # such an inbox rather than writing a note the next index cannot see.
+        candidate = root
+        if any(os.path.islink(candidate := os.path.join(candidate, part))
+               for part in parts):
+            continue
+        return
+    print(f"recall: inbox is not walkable from an indexed source (source missing, "
+          f"outside it, symlinked, or excluded): {inbox}", file=sys.stderr)
+    raise SystemExit(2)
 
 
 def _sql_literal(value):
@@ -310,6 +362,11 @@ def _index_all_files(con, cur, commit_each):
     run may commit after each changed file; a rebuild passes false so the caller
     owns one atomic transaction."""
     seen, changed, n_chunks = set(), 0, 0
+    # Adding `rel` to an older database leaves existing rows null. Backfill those
+    # paths during an ordinary incremental run; no expensive re-embedding is
+    # needed, and counting the metadata update ensures `index --publish` ships it.
+    cur.execute("SELECT DISTINCT path FROM chunks WHERE rel IS NULL")
+    missing_rel = {path for (path,) in cur.fetchall()}
     for source, root, path in iter_files():
         seen.add(path)
         with open(path, encoding="utf-8", errors="replace") as handle:
@@ -318,13 +375,23 @@ def _index_all_files(con, cur, commit_each):
         cur.execute("SELECT hash FROM files WHERE path=?", (path,))
         row = cur.fetchall()
         if row and row[0][0] == h:
-            continue                       # unchanged -> skip (incremental)
+            if path in missing_rel:
+                rel = os.path.relpath(path, root)
+                cur.execute("UPDATE chunks SET rel=? WHERE path=? AND rel IS NULL", (rel, path))
+                missing_rel.discard(path)
+                changed += 1
+                if commit_each:
+                    con.commit()
+                print(f"  upgraded path metadata for {os.path.relpath(path, HOME)}",
+                      file=sys.stderr)
+            continue                       # unchanged -> skip embedding
         changed += 1
         n_chunks += _index_one_file(cur, source, root, path, raw, h)
         if commit_each:
             con.commit()
         print(f"  indexed {os.path.relpath(path, HOME)}", file=sys.stderr)
-    # drop files that disappeared
+    # Drop files that disappeared. Deletions are changes too: callers use the
+    # return value to decide whether `index --publish` must refresh readers.
     cur.execute("SELECT path FROM files")
     for (p,) in cur.fetchall():
         if p not in seen:
@@ -333,6 +400,10 @@ def _index_all_files(con, cur, commit_each):
                 cur.execute("DELETE FROM fts WHERE rowid=?", (cid,))
             cur.execute("DELETE FROM chunks WHERE path=?", (p,))
             cur.execute("DELETE FROM files WHERE path=?", (p,))
+            changed += 1
+            if commit_each:
+                con.commit()
+            print(f"  removed {os.path.relpath(p, HOME)}", file=sys.stderr)
     print(f"done. {changed} files changed, {n_chunks} chunks (re)embedded.", file=sys.stderr)
     return changed
 
@@ -359,6 +430,18 @@ def cmd_index(rebuild=False):
     changed = _index_all_files(con, cur, commit_each=True)
     con.commit()
     return changed
+
+
+def _snapshot_needs_publish():
+    """Detect an unpublished writer DB after a prior publish failure."""
+    if not PUBLISH_PATH or not os.path.exists(PUBLISH_PATH):
+        return True
+    if os.path.exists(PUBLISH_PATH + ".tmp"):
+        return True
+    try:
+        return os.stat(DB_PATH).st_mtime_ns > os.stat(PUBLISH_PATH).st_mtime_ns
+    except OSError:
+        return True
 
 
 def cmd_publish():
@@ -395,6 +478,7 @@ def cmd_add(text, source="cli", title=None, publish=False):
         raise SystemExit(2)
     from datetime import datetime
     inbox = CFG["inbox"]
+    _require_indexed_inbox(inbox)
     os.makedirs(inbox, exist_ok=True)
     now = datetime.now()
     h = hashlib.sha1((text + now.isoformat()).encode()).hexdigest()[:6]
@@ -415,13 +499,23 @@ def cmd_add(text, source="cli", title=None, publish=False):
         print("recall: reader machine — note written to the synced corpus; the "
               "writer indexes it on its next reindex.", file=sys.stderr)
     else:
+        indexed = False
         try:
             cmd_index()
-        except (urllib.error.URLError, ConnectionError, OSError) as e:
+            indexed = True
+        except EmbedUnavailable as e:
             print(f"recall: note saved; indexing deferred (embed unavailable: {e})",
                   file=sys.stderr)
         if publish:
-            cmd_publish()
+            # Only publish once the note is actually in the index. Publishing a
+            # deferred-index db would ship a snapshot that omits the note we
+            # just added; re-run `index --publish` once the embedder is back.
+            if indexed:
+                cmd_publish()
+            else:
+                print("recall: publish skipped — index was deferred; run "
+                      "'index --publish' once the embedder is reachable.",
+                      file=sys.stderr)
     print(fp)                                 # stdout: the path, for callers/agents
     return fp
 
@@ -455,6 +549,7 @@ def _fts_ids(cur, q, pool):
         return []
 
 def cmd_recall(q, k=5, pool=20, mode=None):
+    _require_reader_snapshot()
     con, cur = connect()
     mode = (mode or RETRIEVAL_MODE)
     # vector ranking: exact brute-force cosine scan (libSQL native fn). If the
@@ -465,7 +560,7 @@ def cmd_recall(q, k=5, pool=20, mode=None):
         cur.execute("""SELECT id FROM chunks
                        ORDER BY vector_distance_cos(emb, vector32(?)) LIMIT ?""", (qv, pool))
         vec_ids = [r[0] for r in cur.fetchall()]
-    except (urllib.error.URLError, ConnectionError, OSError) as e:
+    except EmbedUnavailable as e:
         print(f"recall: embedder unavailable ({e}); falling back to keyword-only.",
               file=sys.stderr)
     # keyword ranking is always computed: V+K tagging, hybrid fusion, and the sole
@@ -503,15 +598,19 @@ def _display_endpoint(url):
     return f"{parsed.scheme}://{host}{port}{parsed.path}"
 
 def cmd_stats():
-    con, cur = connect()
-    cur.execute("SELECT COUNT(*),COUNT(DISTINCT path) FROM chunks")
-    c, f = cur.fetchall()[0]
-    sz = os.path.getsize(DB_PATH) if os.path.exists(DB_PATH) else 0
     role = "reader" if READ_ONLY else "writer"
     print(f"db={DB_PATH}")
     print(f"role={role}")
     print(f"retrieval_mode={RETRIEVAL_MODE}")
     print(f"embedder={_display_endpoint(EMBED_URL)}")
+    if READ_ONLY and not os.path.exists(DB_PATH):
+        print("snapshot=missing (the writer must publish and file-sync must finish)")
+        print("files=unavailable chunks=unavailable size=0KB")
+        return
+    con, cur = connect()
+    cur.execute("SELECT COUNT(*),COUNT(DISTINCT path) FROM chunks")
+    c, f = cur.fetchall()[0]
+    sz = os.path.getsize(DB_PATH) if os.path.exists(DB_PATH) else 0
     print(f"files={f} chunks={c} size={sz/1024:.0f}KB")
     if PUBLISH_PATH:
         pub_sz = os.path.getsize(PUBLISH_PATH) if os.path.exists(PUBLISH_PATH) else 0
@@ -538,7 +637,7 @@ def _cli(argv=None):
 
     if args.cmd_or_query == "index":
         changed = cmd_index(rebuild=args.rebuild)
-        if args.publish and (changed > 0 or args.rebuild):
+        if args.publish and (changed > 0 or args.rebuild or _snapshot_needs_publish()):
             cmd_publish()
     elif args.cmd_or_query == "publish":
         cmd_publish()

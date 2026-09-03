@@ -7,7 +7,7 @@ hundred lines of Python, one SQLite file.
 
 ```
 $ recall "why did we drop the legacy queue worker"
-[V+K] ~/notes/decisions/queue_migration_decision.md:1
+[V+K] memory/decisions/queue_migration_decision.md:1
     Decision: retire the legacy queue worker in favor of the managed broker ...
 ```
 
@@ -39,7 +39,8 @@ python3 ~/.recall/recall.py index --rebuild            # wipe + full reindex (af
 python3 ~/.recall/recall.py index --publish            # reindex, then publish a snapshot (writer only)
 python3 ~/.recall/recall.py publish                    # publish a fresh snapshot from the current db (writer only)
 python3 ~/.recall/recall.py add "durable fact" --title "short title"   # write a dated intake note
-python3 ~/.recall/recall.py stats                      # db path, role, retrieval mode, embedder, counts
+python3 ~/.recall/recall.py add "durable fact" --publish               # index + publish it (writer only)
+python3 ~/.recall/recall.py stats                      # role/config/counts, or missing-reader-snapshot diagnosis
 ```
 
 `--vector` and `--hybrid` are mutually exclusive. The `recall` shorthand is an interactive
@@ -136,6 +137,12 @@ The embedder endpoint/model are also overridable per machine:
 private benchmark (`bench_quality.py` against the real `bench_labels.json`) shows `hybrid`
 winning on hit@k / MRR. A per-query `--vector` / `--hybrid` flag overrides it either way.
 
+If `inbox` is configured, it must be directly walkable inside an available `source`: not
+outside it, below an excluded directory, or through a child-directory symlink. This prevents
+`add --publish` from shipping a snapshot that omits the newly written note. If indexing is
+deferred because the embedder is unavailable, the note remains saved but publication is
+skipped; retry with `index --publish` once the embedder is reachable.
+
 `config.json` and `bench_labels.json` are gitignored (they describe a personal corpus); only
 the `.example` templates are tracked. Individual Markdown notes are the source of truth;
 `MEMORY.md` catalog files are skipped because they duplicate those notes and pollute retrieval.
@@ -215,4 +222,4 @@ hop); 1.1 MB for 173 chunks.
 - Retrieval quality depends on chunking + embedder; chunking here is deliberately naive.
 - Embedder down → recall degrades to keyword-only (FTS) with a stderr warning, results tagged
   `[K]`; indexing still requires the embedder (it must embed).
-- Single-corpus, single-machine. The DB is a per-machine cache.
+- Shared snapshots use one designated writer; readers intentionally cannot index or publish.

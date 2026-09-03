@@ -1,9 +1,11 @@
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
 import os
 from pathlib import Path
+import sqlite3
 import runpy
 import sys
 import tempfile
@@ -323,6 +325,85 @@ class RecallDbTests(unittest.TestCase):
                     module.cmd_index()
                 self.assertEqual(raised.exception.code, 2)
 
+    def test_incremental_index_backfills_rel_without_embedding(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            root = home / "n"
+            root.mkdir()
+            note = root / "folder" / "a.md"
+            note.parent.mkdir()
+            note.write_text("unchanged body", encoding="utf-8")
+            module = self._engine(td, {"sources": [{"label": "n", "path": str(root)}]})
+            con = sqlite3.connect(":memory:")
+            cur = con.cursor()
+            cur.execute("CREATE TABLE chunks(id INTEGER PRIMARY KEY, source, path, rel, line, txt)")
+            cur.execute("CREATE TABLE files(path PRIMARY KEY, hash)")
+            cur.execute("CREATE TABLE fts(txt)")
+            digest = hashlib.sha1(note.read_bytes()).hexdigest()
+            cur.execute("INSERT INTO chunks VALUES (1, 'n', ?, NULL, 1, 'unchanged body')",
+                        (str(note),))
+            cur.execute("INSERT INTO files VALUES (?, ?)", (str(note), digest))
+            cur.execute("INSERT INTO fts(rowid, txt) VALUES (1, 'unchanged body')")
+
+            with mock.patch.object(module, "embed",
+                                   side_effect=AssertionError("must not re-embed")):
+                changed = module._index_all_files(con, cur, commit_each=True)
+
+            self.assertEqual(changed, 1)
+            self.assertEqual(cur.execute("SELECT rel FROM chunks").fetchone()[0], "folder/a.md")
+            self.assertEqual(cur.execute("SELECT COUNT(*) FROM fts").fetchone()[0], 1)
+            con.close()
+
+    def test_incremental_index_counts_and_removes_deleted_files(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            root = home / "n"
+            root.mkdir()
+            gone = root / "gone.md"
+            module = self._engine(td, {"sources": [{"label": "n", "path": str(root)}]})
+            con = sqlite3.connect(":memory:")
+            cur = con.cursor()
+            cur.execute("CREATE TABLE chunks(id INTEGER PRIMARY KEY, source, path, rel, line, txt)")
+            cur.execute("CREATE TABLE files(path PRIMARY KEY, hash)")
+            cur.execute("CREATE TABLE fts(txt)")
+            cur.execute("INSERT INTO chunks VALUES (1, 'n', ?, 'gone.md', 1, 'stale')",
+                        (str(gone),))
+            cur.execute("INSERT INTO files VALUES (?, 'old-hash')", (str(gone),))
+            cur.execute("INSERT INTO fts(rowid, txt) VALUES (1, 'stale')")
+
+            changed = module._index_all_files(con, cur, commit_each=True)
+
+            self.assertEqual(changed, 1)
+            for table in ("chunks", "files", "fts"):
+                self.assertEqual(cur.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0], 0)
+            con.close()
+
+    def test_walk_error_aborts_before_stale_file_pruning(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            root = home / "n"
+            root.mkdir()
+            indexed = root / "keep.md"
+            module = self._engine(td, {"sources": [{"label": "n", "path": str(root)}]})
+            con = sqlite3.connect(":memory:")
+            cur = con.cursor()
+            cur.execute("CREATE TABLE chunks(id INTEGER PRIMARY KEY, source, path, rel, line, txt)")
+            cur.execute("CREATE TABLE files(path PRIMARY KEY, hash)")
+            cur.execute("INSERT INTO chunks VALUES (1, 'n', ?, 'keep.md', 1, 'keep')",
+                        (str(indexed),))
+            cur.execute("INSERT INTO files VALUES (?, 'old-hash')", (str(indexed),))
+
+            def failed_walk(root_path, onerror):
+                onerror(PermissionError(f"cannot read {root_path}"))
+
+            with mock.patch.object(module.os, "walk", side_effect=failed_walk):
+                with self.assertRaises(PermissionError):
+                    module._index_all_files(con, cur, commit_each=True)
+
+            self.assertEqual(cur.execute("SELECT COUNT(*) FROM chunks").fetchone()[0], 1)
+            self.assertEqual(cur.execute("SELECT COUNT(*) FROM files").fetchone()[0], 1)
+            con.close()
+
     def test_rebuild_rolls_back_on_embed_failure(self):
         with tempfile.TemporaryDirectory() as td:
             home = Path(td)
@@ -385,7 +466,7 @@ class _RecallCursor:
 def _run_recall(module, cur, mode=None, embed_ok=True):
     con = types.SimpleNamespace(cursor=lambda: cur)
     embed = (mock.Mock(return_value=[0.0] * 768) if embed_ok
-             else mock.Mock(side_effect=OSError("embedder down")))
+             else mock.Mock(side_effect=module.EmbedUnavailable("embedder down")))
     buf = []
     with mock.patch.object(module, "connect", return_value=(con, cur)), \
          mock.patch.object(module, "embed", embed), \
@@ -467,6 +548,18 @@ class RecallRankingTests(unittest.TestCase):
             out = _run_recall(module, cur)
             self.assertIn("notes/a.md:4", out)
 
+    def test_reader_query_without_snapshot_gives_clear_error(self):
+        with tempfile.TemporaryDirectory() as td:
+            module = load_engine(Path(td), {
+                "sources": [{"label": "n", "path": "~/n"}],
+                "db_path": "~/.recall/missing.db", "read_only": True,
+            })
+            boom = mock.Mock(side_effect=AssertionError("connect must not be called"))
+            with mock.patch.dict(sys.modules, {"libsql": mock.Mock(connect=boom)}):
+                with self.assertRaises(SystemExit) as raised:
+                    module.cmd_recall("anything")
+            self.assertEqual(raised.exception.code, 2)
+
 
 class RecallAddTests(unittest.TestCase):
     def setUp(self):
@@ -475,8 +568,10 @@ class RecallAddTests(unittest.TestCase):
         self.enterContext(contextlib.redirect_stdout(io.StringIO()))
 
     def _module(self, td, **extra):
-        cfg = {"sources": [{"label": "notes", "path": str(Path(td) / "notes")}],
-               "inbox": str(Path(td) / "notes" / "_inbox")}
+        root = Path(td) / "notes"
+        root.mkdir(exist_ok=True)
+        cfg = {"sources": [{"label": "notes", "path": str(root)}],
+               "inbox": str(root / "_inbox")}
         cfg.update(extra)
         return load_engine(Path(td), cfg)
 
@@ -495,6 +590,36 @@ class RecallAddTests(unittest.TestCase):
                 path = module.cmd_add("a durable fact", source="cli")
             self.assertTrue(os.path.exists(path))
             self.assertEqual(len(list((Path(td) / "notes" / "_inbox").iterdir())), 1)
+
+    def test_add_rejects_inbox_the_indexer_cannot_walk(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            invalid = [home / "outside", home / "notes" / "_archive" / "inbox"]
+            symlink_target = home / "symlink-target"
+            symlink_target.mkdir()
+            (home / "notes").mkdir()
+            (home / "notes" / "linked").symlink_to(symlink_target, target_is_directory=True)
+            invalid.append(home / "notes" / "linked" / "inbox")
+            for inbox in invalid:
+                with self.subTest(inbox=inbox):
+                    module = self._module(td, inbox=str(inbox))
+                    with mock.patch.object(
+                            module, "cmd_index",
+                            side_effect=AssertionError("invalid inbox must not index")):
+                        with self.assertRaises(SystemExit) as raised:
+                            module.cmd_add("a durable fact")
+                    self.assertEqual(raised.exception.code, 2)
+                    self.assertFalse(inbox.exists())
+
+            missing_root = home / "missing-source"
+            module = load_engine(home, {
+                "sources": [{"label": "missing", "path": str(missing_root)}],
+                "inbox": str(missing_root / "_inbox"),
+            })
+            with self.assertRaises(SystemExit) as raised:
+                module.cmd_add("must not recreate an unmounted source")
+            self.assertEqual(raised.exception.code, 2)
+            self.assertFalse(missing_root.exists())
 
     def test_writer_indexes_then_publishes_only_with_flag(self):
         with tempfile.TemporaryDirectory() as td:
@@ -520,19 +645,44 @@ class RecallAddTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             module = self._module(td)
             with mock.patch.object(module, "cmd_index",
-                                   side_effect=OSError("embedder down")):
+                                   side_effect=module.EmbedUnavailable("embedder down")):
                 path = module.cmd_add("resilient capture")
             self.assertTrue(os.path.exists(path))
+
+    def test_publish_skipped_when_indexing_deferred(self):
+        # A deferred index means the note is not yet in the db; publishing then
+        # would ship a snapshot missing the note just added. Publish must wait.
+        with tempfile.TemporaryDirectory() as td:
+            module = self._module(td, publish_path=str(Path(td) / "pub.db"))
+            with mock.patch.object(module, "cmd_index",
+                                   side_effect=module.EmbedUnavailable("embedder down")), \
+                 mock.patch.object(module, "cmd_publish") as pub:
+                path = module.cmd_add("deferred capture", publish=True)
+            self.assertTrue(os.path.exists(path))
+            pub.assert_not_called()
+
+    def test_add_propagates_index_filesystem_errors_without_mislabeling_them(self):
+        with tempfile.TemporaryDirectory() as td:
+            module = self._module(td)
+            stderr = io.StringIO()
+            with mock.patch.object(module, "cmd_index",
+                                   side_effect=PermissionError("unreadable subtree")), \
+                 contextlib.redirect_stderr(stderr):
+                with self.assertRaises(PermissionError):
+                    module.cmd_add("saved before indexing")
+            self.assertEqual(len(list((Path(td) / "notes" / "_inbox").iterdir())), 1)
+            self.assertNotIn("embed unavailable", stderr.getvalue())
 
 
 class RecallDispatchTests(unittest.TestCase):
     def _module(self, td):
         return load_engine(Path(td), {"sources": [{"label": "n", "path": "~/n"}]})
 
-    def test_index_publish_only_when_changed_or_rebuild(self):
+    def test_index_publish_only_when_changed_rebuild_or_snapshot_stale(self):
         with tempfile.TemporaryDirectory() as td:
             module = self._module(td)
             with mock.patch.object(module, "cmd_index", return_value=0) as idx, \
+                 mock.patch.object(module, "_snapshot_needs_publish", return_value=False), \
                  mock.patch.object(module, "cmd_publish") as pub:
                 module._cli(["index", "--publish"])
                 pub.assert_not_called()
@@ -542,6 +692,11 @@ class RecallDispatchTests(unittest.TestCase):
             with mock.patch.object(module, "cmd_index", return_value=0), \
                  mock.patch.object(module, "cmd_publish") as pub:
                 module._cli(["index", "--rebuild", "--publish"])
+                pub.assert_called_once()
+            with mock.patch.object(module, "cmd_index", return_value=0), \
+                 mock.patch.object(module, "_snapshot_needs_publish", return_value=True), \
+                 mock.patch.object(module, "cmd_publish") as pub:
+                module._cli(["index", "--publish"])
                 pub.assert_called_once()
 
     def test_add_forwards_every_argument(self):
@@ -569,17 +724,20 @@ class RecallDispatchTests(unittest.TestCase):
 class RecallStatsTests(unittest.TestCase):
     def test_stats_sanitizes_endpoint_and_reports_role_mode(self):
         with tempfile.TemporaryDirectory() as td:
-            module = load_engine(Path(td), {
+            home = Path(td)
+            db = home / ".recall" / "reader.db"
+            module = load_engine(home, {
                 "sources": [{"label": "n", "path": "~/n"}],
+                "db_path": str(db),
                 "retrieval_mode": "hybrid",
                 "read_only": True,
                 "embed_url": "https://user:secret@embed.example.com:8443/v1/embeddings?token=abc#frag",
             })
+            db.touch()
             cur = _RecallCursor(True, [], [], {})
             con = types.SimpleNamespace(cursor=lambda: cur)
             buf = []
             with mock.patch.object(module, "connect", return_value=(con, cur)), \
-                 mock.patch.object(module.os.path, "exists", return_value=False), \
                  mock.patch("builtins.print", lambda *a, **k: buf.append(" ".join(str(x) for x in a))):
                 module.cmd_stats()
             out = "\n".join(buf)
@@ -589,6 +747,24 @@ class RecallStatsTests(unittest.TestCase):
             self.assertNotIn("secret", out)
             self.assertNotIn("token=abc", out)
             self.assertNotIn("frag", out)
+
+    def test_reader_stats_reports_missing_snapshot_without_connecting(self):
+        with tempfile.TemporaryDirectory() as td:
+            module = load_engine(Path(td), {
+                "sources": [{"label": "n", "path": "~/n"}],
+                "db_path": "~/.recall/missing.db",
+                "read_only": True,
+            })
+            buf = []
+            with mock.patch.object(
+                    module, "connect",
+                    side_effect=AssertionError("missing snapshot must not connect")), \
+                 mock.patch("builtins.print", lambda *a, **k: buf.append(" ".join(str(x) for x in a))):
+                module.cmd_stats()
+            out = "\n".join(buf)
+            self.assertIn("role=reader", out)
+            self.assertIn("snapshot=missing", out)
+            self.assertIn("files=unavailable", out)
 
 
 class BenchPathMatchTests(unittest.TestCase):
