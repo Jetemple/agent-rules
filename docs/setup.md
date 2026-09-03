@@ -58,7 +58,9 @@ things:
 4. Special-cases Claude: creates a core-only `~/.claude/AGENTS.md` stub (with an
    `@…/core.md` import line) if absent, and links `~/.claude/CLAUDE.md` → `AGENTS.md`. An
    existing personal file is never touched.
-5. Installs the privacy-guard pre-commit hook.
+5. Installs the privacy-guard pre-commit hook. An executable
+   `~/.config/agent-rules/pre-commit-extra` may add private machine-specific checks; it runs
+   before, never instead of, the canonical guard.
 6. Creates a stub `~/.config/agent-rules/private-patterns` if absent — **edit it**: add your
    name, handles, and employer as regexes so `check-privacy.sh` blocks them from ever being
    committed. It lives outside the repo so the guard never encodes your identity.

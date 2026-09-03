@@ -1,9 +1,11 @@
 # Memory & recall
 
 `tools/recall` is a semantic search CLI over a Markdown **memory corpus** — notes an agent
-accumulates across sessions (decisions, gotchas, how-tos). It ranks by meaning, not just
-keywords, so a natural-language question returns the relevant notes even when you don't know
-which file they live in. Usage, the `[V]`/`[K]` result tags, and benchmarks live in
+accumulates across sessions (decisions, gotchas, how-tos). Each individual Markdown note is a
+source-of-truth record. A separate `MEMORY.md` catalog is not required and is deliberately
+excluded from recall (default `exclude_files`) because it duplicates those records. recall
+ranks by meaning, not just keywords, so a natural-language question returns the relevant notes
+even when you don't know which file they live in. Usage, the `[V]`/`[K]` result tags, and benchmarks live in
 `tools/recall/README.md`; this page covers setup and maintenance.
 
 ## Querying

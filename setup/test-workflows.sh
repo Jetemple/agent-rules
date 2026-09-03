@@ -54,8 +54,12 @@ if grep -Eiq 'add .*pointer.*MEMORY\.md|skim the index|remove .*MEMORY\.md.*inde
   echo "FAIL: memory workflows must not maintain a MEMORY.md catalog" >&2
   exit 1
 fi
-grep -Fq 'f != "MEMORY.md"' "$REPO_SRC/tools/recall/recall.py" || {
+grep -Fq 'raw.get("exclude_files"), ["MEMORY.md"]' "$REPO_SRC/tools/recall/recall.py" || {
   echo "FAIL: recall must exclude legacy MEMORY.md catalogs" >&2
+  exit 1
+}
+grep -Fq '"exclude_files": ["MEMORY.md"]' "$REPO_SRC/tools/recall/config.example.json" || {
+  echo "FAIL: recall example config must exclude legacy MEMORY.md catalogs" >&2
   exit 1
 }
 
