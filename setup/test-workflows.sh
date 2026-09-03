@@ -46,3 +46,17 @@ while read -r name source _; do
     exit 1
   }
 done < "$REPO_SRC/workflow-map"
+
+# Memory intake is recall-only over individual source notes. Prevent the legacy dual-write
+# contract from creeping back into the canonical workflows or recall walker.
+if grep -Eiq 'add .*pointer.*MEMORY\.md|skim the index|remove .*MEMORY\.md.*index line' \
+  "$REPO_SRC/workflows/wrap/SKILL.md" "$REPO_SRC/workflows/drain-memory/SKILL.md"; then
+  echo "FAIL: memory workflows must not maintain a MEMORY.md catalog" >&2
+  exit 1
+fi
+grep -Fq 'f != "MEMORY.md"' "$REPO_SRC/tools/recall/recall.py" || {
+  echo "FAIL: recall must exclude legacy MEMORY.md catalogs" >&2
+  exit 1
+}
+
+echo "PASS: memory workflows write source notes only; recall excludes MEMORY.md"
