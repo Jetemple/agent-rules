@@ -5,21 +5,19 @@ description: Use when memories may have gone false — "drain my memory", "what'
 
 # drain-memory
 
-> **Assumes a memory-corpus convention.** This workflow reads and edits a Markdown memory
-> corpus queried by `recall` (see `docs/memory-and-recall.md` and `tools/recall/`). It relies
-> on conventions that repo, not this skill, defines: a per-directory `MEMORY.md` index, a
-> one-file-per-fact frontmatter contract (`name` / `description` / `metadata.type` /
-> `originSessionId`), `[[wikilink]]` cross-references, and a derived index (`~/.recall/memory.db`)
-> that is rebuilt from the corpus. Corpus roots come from `~/.recall/config.json` (`sources[].path`),
-> so this workflow never hardcodes a directory. If your corpus uses different conventions, adapt
-> the frontmatter and index steps to match.
+> **Assumes a recall-backed Markdown corpus.** Individual memory files are the source of truth;
+> recall's database is a derived search cache. This workflow relies on a one-file-per-fact
+> frontmatter contract (`name` / `description` / `metadata.type` / `originSessionId`) and
+> `[[wikilink]]` cross-references. Corpus roots come from `~/.recall/config.json`
+> (`sources[].path`), so this workflow never hardcodes a directory. `MEMORY.md` catalogs are
+> legacy artifacts and are neither required nor maintained.
 
 Reconcile the memory corpus against **current reality**. This is the truth-checking member of
 the memory-maintenance family; the others don't do this job:
 
 - **wrap / a corpus-mining workflow** — *intake*: capture facts not yet written down.
-- **a consolidation pass** — *calibration*: trim over-long index hooks, merge redundant
-  clusters, fix broken links. It assumes the facts are still **true**.
+- **a consolidation pass** — *calibration*: sharpen retrieval descriptions, merge redundant
+  source files, and fix broken links. It assumes the facts are still **true**.
 - **drain-memory** — *truth reconciliation*: find facts that were true when written but time
   has since **falsified**, and drain or refresh them.
 
@@ -35,9 +33,9 @@ verify a specific claim against a live source — the point is a fast, self-cont
 corpus can answer about itself.
 
 Four verdicts per suspect:
-- **DRAIN** — the fact is dead. Lifecycle complete, superseded, or falsified. Delete the file
-  and its index line. (Or **ARCHIVE** if a paper trail is wanted — move it out of the corpus
-  roots instead of deleting; see step 5.)
+- **DRAIN** — the fact is dead. Lifecycle complete, superseded, or falsified. Delete the source
+  file. (Or **ARCHIVE** if a paper trail is wanted — move it out of the corpus roots instead of
+  deleting; see step 5.)
 - **REFRESH** — still about a live thing, but the stated *state* is stale. Rewrite the state,
   re-stamp the date, keep the file.
 - **VERIFY** — can't be adjudicated from the corpus alone. A suspect the user (or an explicit
@@ -147,19 +145,18 @@ proposed new state line. **Get the user's approval and honor it exactly — neve
 a KEEP.**
 
 ### 5. Apply the approved changes (from a real interactive session — never a subagent)
-- **DRAIN → delete:** remove the file and its `MEMORY.md` index line. First grep the corpus for
-  inbound `[[wikilinks]]` to it and repoint or drop them (a dangling link is exactly what a
-  consolidation pass hunts for). Because the recall index (`~/.recall/memory.db`) is **derived**,
-  the fact only disappears from search after you reindex (step 6) — deleting the `.md` alone
-  leaves it in the SQLite/FTS index until rebuilt. recall's reindex does purge files that have
-  disappeared (it drops any indexed path no longer seen on the walk), so a plain `rm` + reindex is
-  a complete delete.
+- **DRAIN → delete:** remove the source file. First grep the corpus for inbound `[[wikilinks]]`
+  and repoint or drop them (a dangling link is exactly what a consolidation pass hunts for).
+  Because the recall index (`~/.recall/memory.db`) is **derived**, the fact only disappears from
+  search after you reindex (step 6) — deleting the `.md` alone leaves it in the SQLite/FTS index
+  until rebuilt. recall's reindex purges files that have disappeared, so `rm` + reindex is a
+  complete delete. Do not edit a `MEMORY.md` catalog.
 - **DRAIN → archive:** recall walks each root recursively but **prunes a fixed set of directory
   names** (`_archive`, `_scratch`, `.git`, `node_modules`, `.obsidian`). So the zero-config archive
   move is `mkdir -p <root>/_archive && mv <file> <root>/_archive/` — the file stays on disk for the
   paper trail but drops out of the index on the next reindex. (Confirm the excluded-dir set against
   your `tools/recall/` version; if yours doesn't prune `_archive`, move the file to a directory
-  that is not a configured `sources[].path` instead.) Then remove its `MEMORY.md` index line.
+  that is not a configured `sources[].path` instead.) Do not edit a `MEMORY.md` catalog.
 - **REFRESH → edit:** rewrite the stale state, update the "current state (DATE)" stamp, keep
   frontmatter and `originSessionId`. Preserve the `**Why:**` / `**How to apply:**` lines for
   feedback/project memories.
@@ -183,10 +180,10 @@ drained file's *path* no longer appears in the results:
 python3 tools/recall/recall.py "the stale claim you just drained" -k 5   # its path must be absent
 ```
 
-Confirm the file count dropped by the number drained, the index line count moved to match, and no
-dangling `[[links]]` remain. Report a before/after (files, index lines, what drained / refreshed /
-verify-pending) and the honest verdict — often "3 drained, 2 refreshed, corpus otherwise current"
-is the whole story.
+Confirm the source-file count dropped by the number drained, the recall path disappeared, and no
+dangling `[[links]]` remain. Report a before/after (source files, recall chunks, what drained /
+refreshed / verify-pending) and the honest verdict — often "3 drained, 2 refreshed, corpus
+otherwise current" is the whole story.
 
 > Path note: examples use `tools/recall/recall.py` (the repo path). On an installed machine the
 > entrypoint may live elsewhere (e.g. `~/.recall/recall.py`); use whichever your setup exposes —
@@ -207,7 +204,7 @@ is the whole story.
 - **The index is derived — reindex after every drain/refresh.** Deleting a `.md` without
   rebuilding `~/.recall/memory.db` leaves the stale fact searchable.
 - **Don't write a memory *about* having drained** — that's conversation-scoped.
-- If the index crossed its size budget or clusters need merging, that's a consolidation pass —
+- If the corpus has redundant clusters or retrieval collisions, that's a consolidation pass —
   hand off, don't do it here.
 
 ## Relationship to sibling workflows
