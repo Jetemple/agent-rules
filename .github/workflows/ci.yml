@@ -44,6 +44,13 @@ jobs:
         run: bash setup/test-compaction-config.sh
       - name: Verify workflow registry and skill frontmatter
         run: bash setup/test-workflows.sh
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install recall test dependency
+        run: python3 -m pip install -r tools/recall/requirements.txt
+      - name: Verify recall engine contracts
+        run: python3 -m unittest discover -s tools/recall -p 'test_*.py' -v
 
   fresh-install:
     runs-on: ubuntu-latest

@@ -1,6 +1,14 @@
 {
   "sources": [
     { "label": "memory", "path": "~/notes/memory" },
-    { "label": "vault",  "path": "~/notes/vault" }
-  ]
+    { "label": "vault", "path": "~/notes/vault" }
+  ],
+  "db_path": "~/.recall/memory.db",
+  "publish_path": null,
+  "read_only": false,
+  "inbox": "~/notes/memory/_inbox",
+  "retrieval_mode": "vector",
+  "exclude_files": ["MEMORY.md"],
+  "embed_url": "http://localhost:8080/v1/embeddings",
+  "embed_model": "ggml-org/embeddinggemma-300M-GGUF:Q8_0"
 }

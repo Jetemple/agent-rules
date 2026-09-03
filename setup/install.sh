@@ -207,10 +207,16 @@ echo "== statusline (optional; seeded once as a real file, not symlinked — mea
 copy_once "$REPO/setup/statusline.sh" "$HOME/.claude/statusline.sh"
 
 echo
-echo "== recall (optional; canonical code linked into ~/.recall; venv/config/db stay device-local) =="
-for f in recall.py recall requirements.txt README.md config.example.json \
+echo "== recall (optional; seeded once into ~/.recall — device state and config live here, the engine stays in the repo) =="
+# ~/.recall/recall.py is a thin *launcher*: it execs the canonical engine
+# (tools/recall/recall.py) through the device venv. Seeding the launcher (not a
+# copy of the engine) keeps retrieval logic single-sourced while ~/.recall stays
+# free to diverge per device. An existing real ~/.recall/recall.py is never
+# touched — the documented migration gate handles that switch deliberately.
+copy_once "$REPO/tools/recall/launcher.py" "$HOME/.recall/recall.py"
+for f in recall requirements.txt README.md config.example.json \
          bench_efficiency.py bench_quality.py bench_vs_grep.py bench_labels.example.json .gitignore; do
-  link "$REPO/tools/recall/$f" "$HOME/.recall/$f"
+  copy_once "$REPO/tools/recall/$f" "$HOME/.recall/$f"
 done
 
 echo

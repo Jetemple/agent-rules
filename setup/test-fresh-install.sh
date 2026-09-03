@@ -124,10 +124,8 @@ grep -qF '# >>> agent-rules hub' "$HOME/.codex/AGENTS.md" || fail "codex block n
 [ -L "$HOME/.claude/CLAUDE.md" ] || fail "claude CLAUDE.md -> AGENTS.md symlink missing"
 grep -q "^@$REPO/core.md" "$HOME/.claude/AGENTS.md" || fail "claude AGENTS.md missing hub import"
 [ -x "$HOME/.claude/statusline.sh" ] || fail "statusline.sh not seeded/executable"
-[ -L "$HOME/.recall/recall.py" ] || fail ".recall/recall.py not linked"
-[ "$(readlink "$HOME/.recall/recall.py")" = "$REPO/tools/recall/recall.py" ] \
-  || fail ".recall/recall.py points at the wrong source"
-[ -L "$HOME/.recall/config.example.json" ] || fail ".recall/config.example.json not linked"
+[ -x "$HOME/.recall/recall.py" ] || fail ".recall/recall.py not seeded/executable"
+[ -f "$HOME/.recall/config.example.json" ] || fail ".recall/config.example.json not seeded"
 [ ! -x "$HOME/.recall/README.md" ] || fail ".recall/README.md wrongly made executable"
 pass "hub wiring matches map"
 
@@ -184,14 +182,26 @@ grep -q "MY CUSTOM STATUSLINE" "$HOME/.claude/statusline.sh" \
   || fail "install.sh clobbered a local statusline.sh edit"
 pass "statusline.sh divergence survives a re-run"
 
-echo "== recall drift is detected and repaired back to the canonical source =="
-ln -sfn "$REPO/tools/recall/README.md" "$HOME/.recall/recall.py"
-if "$REPO/setup/doctor.sh"; then fail "doctor accepted a drifted recall link"; fi
+echo "== recall: installed ~/.recall/recall.py is the canonical launcher, not a copied engine =="
+cmp -s "$HOME/.recall/recall.py" "$REPO/tools/recall/launcher.py" \
+  || fail "installed ~/.recall/recall.py is not the canonical launcher"
+[ -f "$REPO/tools/recall/recall.py" ] \
+  || fail "canonical recall engine missing from the repo"
+grep -qF "canonical engine not found" "$HOME/.recall/recall.py" \
+  || fail "seeded ~/.recall/recall.py does not look like the launcher"
+pass "recall launcher seeded; canonical engine stays in the repo"
+
+echo "== recall: a deliberate launcher-local edit survives a re-run and doctor warns without overwriting =="
+printf '#!/usr/bin/env python3\n# MY CUSTOM RECALL LAUNCHER EDIT\n' > "$HOME/.recall/recall.py"
 "$REPO/setup/install.sh"
-[ "$(readlink "$HOME/.recall/recall.py")" = "$REPO/tools/recall/recall.py" ] \
-  || fail "install.sh did not repair the recall link"
-"$REPO/setup/doctor.sh" || fail "doctor rejected the repaired recall link"
-pass "recall drift is detected and repaired"
+grep -q "MY CUSTOM RECALL LAUNCHER EDIT" "$HOME/.recall/recall.py" \
+  || fail "install.sh clobbered a local ~/.recall/recall.py edit"
+recall_doctor="$("$REPO/setup/doctor.sh")" || fail "doctor.sh FAILed on an edited launcher"
+printf '%s\n' "$recall_doctor" | grep -qF "recall launcher/runtime differs" \
+  || fail "doctor did not warn about the diverged launcher"
+grep -q "MY CUSTOM RECALL LAUNCHER EDIT" "$HOME/.recall/recall.py" \
+  || fail "doctor overwrote the diverged launcher"
+pass "diverged launcher preserved; doctor warns, installer never adopts it"
 
 echo
 echo "ALL FRESH-INSTALL CHECKS PASSED"

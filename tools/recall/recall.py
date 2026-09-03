@@ -4,97 +4,160 @@ recall — tool-agnostic semantic memory recall over a notes corpus + agent memo
 
 Engine : libSQL (native F32_BLOB vectors + brute-force vector_distance_cos) + FTS5.
 Embed  : llama.cpp `llama serve` `embeddinggemma` (768-d, fully offline).
-Recall : vector-only by default (see cmd_recall); --hybrid adds FTS5 + Reciprocal Rank
-         Fusion, and FTS-only is the automatic fallback when the embedder is unreachable.
+Recall : retrieval_mode config picks the default — "vector" (portable default) or
+         "hybrid" (FTS5 + Reciprocal Rank Fusion). --vector/--hybrid override per query.
+         FTS-only is the automatic fallback when the embedder is unreachable.
 Output : each hit is tagged by which arm matched — [V+K] both, [V] semantic only (the
          grep-can't-find-it case), [K] keyword only (or the embedder-down fallback).
 
 Usage:
   recall.py index            # incremental (only changed files) — run this before first query
   recall.py index --rebuild  # wipe + full reindex
-  recall.py "query text"     # vector recall, prints file:line + snippet
-  recall.py "query" --hybrid # RRF hybrid for noisier/larger corpora
+  recall.py "query text"     # recall in the configured mode, prints citation:line + snippet
+  recall.py "query" --hybrid # force RRF hybrid; --vector forces vector-only
+  recall.py add "a durable fact" --title "short title" [--publish]
+  recall.py publish          # writer-only: refresh the synced snapshot
   recall.py stats
 Both Codex and Claude just shell out:  recall.py "how do I rebuild the index"
 """
-import os, sys, json, hashlib, urllib.request, urllib.error, argparse, textwrap
-
-# ---- venv bootstrap ---------------------------------------------------------
-# libsql ships prebuilt wheels only for some CPython versions (3.13 here);
-# the system python3 may lack it. If libsql isn't importable, re-exec this
-# script under the project venv so the documented `python3 recall.py` path
-# works from any runtime (Claude, Codex, plain shell) without a wrapper.
-def _ensure_libsql():
-    try:
-        import libsql  # noqa: F401
-        return
-    except ImportError:
-        venv_py = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                               ".venv", "bin", "python3")
-        if os.path.exists(venv_py) and os.path.realpath(sys.executable) != os.path.realpath(venv_py):
-            os.execv(venv_py, [venv_py, os.path.abspath(__file__), *sys.argv[1:]])
-        raise
-_ensure_libsql()
+import os, sys, json, hashlib, urllib.request, urllib.error, argparse, textwrap, sqlite3
+from urllib.parse import quote, urlsplit
 
 # ---- config -----------------------------------------------------------------
+# The engine stays importable with no third-party deps (unit tests exercise
+# config/corpus/formatting logic directly). `libsql` is imported lazily inside
+# connect(); virtualenv selection is the launcher's job, not the engine's.
 HOME      = os.path.expanduser("~")
-DB_PATH   = os.path.join(HOME, ".recall", "memory.db")
-EMBED_URL = os.environ.get("RECALL_EMBED_URL", "http://localhost:8080/v1/embeddings")
-MODEL     = os.environ.get("RECALL_EMBED_MODEL", "ggml-org/embeddinggemma-300M-GGUF:Q8_0")
 DIM       = 768
 CHUNK_MAX = 1100          # chars per chunk (soft)
 RRF_K     = 60            # reciprocal-rank-fusion constant
 
-# Corpus config is loaded at runtime, never hardcoded, so this file can be
+
+class EmbedUnavailable(RuntimeError):
+    """The local embedding service could not complete a request."""
+
+
+# Corpus + DB config is loaded at runtime, never hardcoded, so this file can be
 # shared/published without leaking personal paths. Priority order:
 #   1. ~/.recall/config.json  (gitignored; the owner's real paths)
-#   2. RECALL_SOURCES env var  (JSON: [{"label":..,"path":..}, ...])
+#   2. env vars  (RECALL_SOURCES / RECALL_DB / RECALL_PUBLISH / RECALL_READONLY /
+#                 RECALL_RETRIEVAL_MODE / RECALL_EMBED_URL / RECALL_EMBED_MODEL)
 #   3. a generic built-in default (+ a one-line hint to create config.json)
 # Copy config.example.json -> config.json and edit it to point at your corpus.
+#
+# config.json keys:
+#   sources         [{label, path}]  corpus roots to index (markdown)
+#   db_path         str   where THIS machine's DB lives (default ~/.recall/memory.db)
+#   publish_path    str   writer-only: where `publish` writes the synced snapshot
+#   read_only       bool  reader: open the DB read-only; refuse index/publish
+#   inbox           str   where `add` writes new notes (default <first source>/_inbox)
+#   retrieval_mode  str   "vector" (default, portable) or "hybrid" (RRF fusion)
+#   exclude_files   [str] basenames never indexed (default ["MEMORY.md"])
+#   embed_url       str   embeddings endpoint (OpenAI-compatible)
+#   embed_model     str   embeddings model id
 CONFIG_PATH = os.path.join(HOME, ".recall", "config.json")
 DEFAULT_SOURCES = [
     ("memory", os.path.join(HOME, "notes", "memory")),
     ("vault",  os.path.join(HOME, "notes", "vault")),
 ]
 
+def _expand(path):
+    return os.path.expanduser(path) if path else path
+
+def _env(name):
+    """An env override, with empty string treated as unset. Templated launchers
+    (launchd, cron, wrappers) routinely export RECALL_* as "" — that must not
+    silently override config.json (e.g. flipping a reader into a writer)."""
+    value = os.environ.get(name)
+    return value if value else None
+
+def _boolean(value, field):
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off", ""}:
+        return False
+    raise ValueError(f"{field} must be a boolean value")
+
+def _string_list(value, default):
+    if value is None:
+        return list(default)
+    if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
+        raise ValueError("exclude_files must be a list of non-empty strings")
+    return value
+
 def _parse_sources(obj):
     """Turn a {"sources":[{"label","path"}]} JSON object into [(label, path)]."""
+    raw_sources = obj.get("sources", [])
+    if not isinstance(raw_sources, list):
+        raise ValueError("sources must be a list of {label, path} objects")
     out = []
-    for s in obj.get("sources", []):
-        label = s.get("label")
-        path = s.get("path")
+    for entry in raw_sources:
+        if not isinstance(entry, dict):
+            raise ValueError("each sources entry must be a {label, path} object")
+        label = entry.get("label")
+        path = entry.get("path")
         if label and path:
             out.append((label, os.path.expanduser(path)))
     return out
 
-def load_sources():
-    # 1. config.json
+def load_config():
+    raw = {}
     if os.path.exists(CONFIG_PATH):
-        try:
-            with open(CONFIG_PATH, encoding="utf-8") as f:
-                src = _parse_sources(json.load(f))
-            if src:
-                return src
-        except (json.JSONDecodeError, OSError) as e:
-            print(f"recall: could not read {CONFIG_PATH}: {e}", file=sys.stderr)
-    # 2. RECALL_SOURCES env var
-    env = os.environ.get("RECALL_SOURCES")
-    if env:
-        try:
-            src = _parse_sources(json.loads(env))
-            if src:
-                return src
-        except json.JSONDecodeError as e:
-            print(f"recall: could not parse RECALL_SOURCES: {e}", file=sys.stderr)
-    # 3. generic default + hint
-    print(f"recall: no config found; using placeholder paths. "
-          f"Create {CONFIG_PATH} (copy config.example.json) to point at your corpus.",
-          file=sys.stderr)
-    return [(label, os.path.expanduser(path)) for label, path in DEFAULT_SOURCES]
+        with open(CONFIG_PATH, encoding="utf-8") as handle:
+            raw = json.load(handle)
 
-SOURCES = load_sources()
-# Hard constitution rules: never index these.
-EXCLUDE_DIRS = {"_scratch", "_archive", ".git", "node_modules", ".obsidian"}
+    sources = _parse_sources(raw)
+    if not sources:
+        env_sources = os.environ.get("RECALL_SOURCES")
+        sources = _parse_sources(json.loads(env_sources)) if env_sources else []
+    if not sources:
+        sources = [(label, _expand(path)) for label, path in DEFAULT_SOURCES]
+
+    retrieval_mode = (
+        _env("RECALL_RETRIEVAL_MODE") or raw.get("retrieval_mode") or "vector"
+    ).strip().lower()
+    if retrieval_mode not in {"vector", "hybrid"}:
+        raise ValueError("retrieval_mode must be 'vector' or 'hybrid'")
+
+    read_only_raw = _env("RECALL_READONLY")
+    if read_only_raw is None:
+        read_only_raw = raw.get("read_only", False)
+
+    return {
+        "sources": sources,
+        "db_path": _expand(_env("RECALL_DB") or raw.get("db_path")
+                           or os.path.join(HOME, ".recall", "memory.db")),
+        "publish_path": _expand(_env("RECALL_PUBLISH") or raw.get("publish_path")),
+        "read_only": _boolean(read_only_raw, "read_only"),
+        "inbox": _expand(raw.get("inbox")) or os.path.join(sources[0][1], "_inbox"),
+        "retrieval_mode": retrieval_mode,
+        "exclude_files": set(_string_list(raw.get("exclude_files"), ["MEMORY.md"])),
+        "embed_url": _env("RECALL_EMBED_URL") or raw.get("embed_url") or "http://localhost:8080/v1/embeddings",
+        "embed_model": _env("RECALL_EMBED_MODEL") or raw.get("embed_model") or "ggml-org/embeddinggemma-300M-GGUF:Q8_0",
+    }
+
+try:
+    CFG = load_config()
+except (json.JSONDecodeError, OSError, ValueError) as error:
+    if __name__ == "__main__":
+        print(f"recall: invalid configuration: {error}", file=sys.stderr)
+        raise SystemExit(2)
+    raise
+
+SOURCES       = CFG["sources"]
+DB_PATH       = CFG["db_path"]
+PUBLISH_PATH  = CFG["publish_path"]
+READ_ONLY     = CFG["read_only"]
+RETRIEVAL_MODE = CFG["retrieval_mode"]
+EXCLUDE_FILES = CFG["exclude_files"]
+EMBED_URL     = CFG["embed_url"]
+MODEL         = CFG["embed_model"]
+# Hard constitution rules: never index these. `_recall` holds the published DB
+# snapshot (inside the synced folder); excluding it keeps the walk from touching it.
+EXCLUDE_DIRS = {"_scratch", "_archive", ".git", "node_modules", ".obsidian", "_recall"}
 
 # ---- embedding --------------------------------------------------------------
 def embed(text, is_query, _tries=5):
@@ -111,10 +174,10 @@ def embed(text, is_query, _tries=5):
         except (urllib.error.URLError, ConnectionError, OSError) as e:
             if isinstance(e, urllib.error.HTTPError) and 400 <= e.code < 500:
                 # permanent client error (bad model name / bad request): no retry
-                raise urllib.error.URLError(
+                raise EmbedUnavailable(
                     f"embedder rejected request ({e.code}): {e.read(200)!r}") from e
             if attempt == _tries - 1:
-                raise
+                raise EmbedUnavailable(str(e)) from e
             import time
             time.sleep(2 * (attempt + 1))   # backoff; rides out a server hiccup
 
@@ -140,71 +203,195 @@ def chunk_md(text):
     return chunks
 
 # ---- db ---------------------------------------------------------------------
-def connect():
+def connect(read_only=None):
+    """Open the DB. Readers open the synced snapshot read-only and never create
+    or alter schema; writers create the schema if missing and migrate the `rel`
+    column idempotently by inspecting the table first (so a genuine database
+    error still propagates instead of being swallowed by a blanket except)."""
     import libsql
+    reader = READ_ONLY if read_only is None else read_only
+    if reader:
+        # quote the path: an unescaped '#' or '?' in DB_PATH would silently
+        # truncate the URI and open (or miss) the wrong database.
+        connection = libsql.connect(f"file:{quote(DB_PATH)}?mode=ro", _uri=True)
+        return connection, connection.cursor()
+
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    con = libsql.connect(DB_PATH)
-    cur = con.cursor()
-    cur.execute(f"""CREATE TABLE IF NOT EXISTS chunks(
-        id INTEGER PRIMARY KEY, source TEXT, path TEXT, line INTEGER,
+    connection = libsql.connect(DB_PATH)
+    cursor = connection.cursor()
+    cursor.execute(f"""CREATE TABLE IF NOT EXISTS chunks(
+        id INTEGER PRIMARY KEY, source TEXT, path TEXT, rel TEXT, line INTEGER,
         txt TEXT, emb F32_BLOB({DIM}))""")
+    # `rel` (path relative to its source root) makes citations machine-portable;
+    # older DBs predate it. Inspect the schema, then add the column only if it is
+    # genuinely absent.
+    columns = {row[1] for row in cursor.execute("PRAGMA table_info(chunks)").fetchall()}
+    if "rel" not in columns:
+        cursor.execute("ALTER TABLE chunks ADD COLUMN rel TEXT")
     # No ANN index: corpus is small (<10k chunks), so a brute-force
     # vector_distance_cos scan is exact, sub-ms, and keeps the DB ~5MB
     # instead of ~155MB (DiskANN stores ~50 raw neighbor vectors/node).
-    cur.execute("""CREATE VIRTUAL TABLE IF NOT EXISTS fts
+    cursor.execute("""CREATE VIRTUAL TABLE IF NOT EXISTS fts
         USING fts5(txt, content='chunks', content_rowid='id')""")
-    cur.execute("""CREATE TABLE IF NOT EXISTS files(
-        path TEXT PRIMARY KEY, hash TEXT)""")
-    con.commit()
-    return con, cur
+    cursor.execute("CREATE TABLE IF NOT EXISTS files(path TEXT PRIMARY KEY, hash TEXT)")
+    connection.commit()
+    return connection, cursor
+
+
+def _chunks_has_rel(cursor):
+    return "rel" in {row[1] for row in cursor.execute("PRAGMA table_info(chunks)").fetchall()}
+
+
+def _chunk_select_columns(cursor):
+    return "source,path,rel,line,txt" if _chunks_has_rel(cursor) else "source,path,NULL AS rel,line,txt"
 
 def iter_files():
     for source, root in SOURCES:
         if not os.path.isdir(root):
             continue
-        for dp, dirs, files in os.walk(root):
-            dirs[:] = [d for d in dirs if d not in EXCLUDE_DIRS]
-            for f in files:
-                # Individual notes are the source of truth. MEMORY.md is a legacy
-                # catalog that duplicates them and would pollute retrieval.
-                if f.endswith(".md") and f != "MEMORY.md":
-                    yield source, os.path.join(dp, f)
+        # os.walk otherwise suppresses traversal failures and makes an unreadable
+        # subtree look deleted. Abort instead; stale-file pruning must only run
+        # after a complete corpus walk.
+        def raise_walk_error(error):
+            raise error
+        for directory, dirs, files in os.walk(root, onerror=raise_walk_error):
+            dirs[:] = [name for name in dirs if name not in EXCLUDE_DIRS]
+            for name in sorted(files):
+                if name.endswith(".md") and name not in EXCLUDE_FILES:
+                    yield source, root, os.path.join(directory, name)
 
 # ---- commands ---------------------------------------------------------------
-def cmd_index(rebuild=False):
-    con, cur = connect()
-    if rebuild:
-        cur.execute("INSERT INTO fts(fts) VALUES('delete-all')")
-        cur.execute("DELETE FROM chunks")
-        cur.execute("DELETE FROM files")
-        con.commit()
+def _refuse_if_readonly(action):
+    if READ_ONLY:
+        print(f"recall: this machine is read_only; refusing to {action}. "
+              f"(Only the writer indexes/writes the shared DB.)", file=sys.stderr)
+        raise SystemExit(2)
+
+
+def _require_reader_snapshot():
+    """Guard the query path on a reader: the db is a synced snapshot the writer
+    publishes. If it has not landed yet (fresh reader, unmounted sync volume,
+    writer never published) libsql opening `mode=ro` surfaces an opaque driver
+    error; give a clear message instead. Standalone/writer machines create the
+    db on demand, so they skip this. `stats` deliberately does not call this —
+    it is the diagnostic you run to discover the snapshot is missing."""
+    if READ_ONLY and not os.path.exists(DB_PATH):
+        print(f"recall: no synced snapshot at {DB_PATH}. This is a reader; the "
+              f"writer must publish a snapshot (and file-sync must finish) "
+              f"before queries work.", file=sys.stderr)
+        raise SystemExit(2)
+
+
+def _validate_source_roots():
+    """A missing configured root (e.g. an unmounted synced volume) must abort
+    before any stale-file deletion, not be silently treated as an empty corpus."""
+    missing = [(label, root) for label, root in SOURCES if not os.path.isdir(root)]
+    if missing:
+        for label, root in missing:
+            print(f"recall: source root missing for {label}: {root}", file=sys.stderr)
+        raise SystemExit(2)
+
+
+def _require_indexed_inbox(inbox):
+    """Require intake notes to land somewhere the corpus walker can index."""
+    inbox = os.path.abspath(inbox)
+    for _, configured_root in SOURCES:
+        root = os.path.abspath(configured_root)
+        if not os.path.isdir(root):
+            continue
+        try:
+            relative = os.path.relpath(inbox, root)
+        except ValueError:  # different drives on platforms that support them
+            continue
+        if relative == os.pardir or relative.startswith(os.pardir + os.sep):
+            continue
+        parts = () if relative == os.curdir else relative.split(os.sep)
+        if any(part in EXCLUDE_DIRS for part in parts):
+            continue
+        # os.walk does not follow directory symlinks below a source root. Reject
+        # such an inbox rather than writing a note the next index cannot see.
+        candidate = root
+        if any(os.path.islink(candidate := os.path.join(candidate, part))
+               for part in parts):
+            continue
+        return
+    print(f"recall: inbox is not walkable from an indexed source (source missing, "
+          f"outside it, symlinked, or excluded): {inbox}", file=sys.stderr)
+    raise SystemExit(2)
+
+
+def _sql_literal(value):
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _yaml_scalar(value):
+    """JSON strings are valid YAML scalars, so this safely quotes frontmatter
+    values that contain colons, quotes, or leading punctuation."""
+    return json.dumps(str(value), ensure_ascii=False)
+
+
+def _citation(source, path, rel):
+    """Machine-portable citation: source-relative when the row has `rel`, else a
+    home-relative fallback for pre-migration rows."""
+    return f"{source}/{rel}" if rel else os.path.relpath(path, HOME)
+
+
+def _index_one_file(cur, source, root, path, raw, h):
+    """(Re)embed a single changed file. Returns the number of chunks embedded."""
+    rel = os.path.relpath(path, root)
+    cur.execute("SELECT id FROM chunks WHERE path=?", (path,))
+    for (cid,) in cur.fetchall():
+        cur.execute("DELETE FROM fts WHERE rowid=?", (cid,))
+    cur.execute("DELETE FROM chunks WHERE path=?", (path,))
+    n_chunks = 0
+    for start, body in chunk_md(raw):
+        v = embed(body, is_query=False)
+        cur.execute(
+            "INSERT INTO chunks(source,path,rel,line,txt,emb) VALUES (?,?,?,?,?,vector32(?))",
+            (source, path, rel, start, body, str(v)))
+        cid = cur.lastrowid
+        cur.execute("INSERT INTO fts(rowid,txt) VALUES (?,?)", (cid, body))
+        n_chunks += 1
+    cur.execute("INSERT OR REPLACE INTO files(path,hash) VALUES (?,?)", (path, h))
+    return n_chunks
+
+
+def _index_all_files(con, cur, commit_each):
+    """Walk the corpus, (re)index changed files, prune vanished ones.
+    Returns the count of changed files. When commit_each is true an incremental
+    run may commit after each changed file; a rebuild passes false so the caller
+    owns one atomic transaction."""
     seen, changed, n_chunks = set(), 0, 0
-    for source, path in iter_files():
+    # Adding `rel` to an older database leaves existing rows null. Backfill those
+    # paths during an ordinary incremental run; no expensive re-embedding is
+    # needed, and counting the metadata update ensures `index --publish` ships it.
+    cur.execute("SELECT DISTINCT path FROM chunks WHERE rel IS NULL")
+    missing_rel = {path for (path,) in cur.fetchall()}
+    for source, root, path in iter_files():
         seen.add(path)
-        raw = open(path, encoding="utf-8", errors="replace").read()
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            raw = handle.read()
         h = hashlib.sha1(raw.encode()).hexdigest()
         cur.execute("SELECT hash FROM files WHERE path=?", (path,))
         row = cur.fetchall()
         if row and row[0][0] == h:
-            continue                       # unchanged -> skip (incremental)
+            if path in missing_rel:
+                rel = os.path.relpath(path, root)
+                cur.execute("UPDATE chunks SET rel=? WHERE path=? AND rel IS NULL", (rel, path))
+                missing_rel.discard(path)
+                changed += 1
+                if commit_each:
+                    con.commit()
+                print(f"  upgraded path metadata for {os.path.relpath(path, HOME)}",
+                      file=sys.stderr)
+            continue                       # unchanged -> skip embedding
         changed += 1
-        # purge old chunks for this file
-        cur.execute("SELECT id FROM chunks WHERE path=?", (path,))
-        for (cid,) in cur.fetchall():
-            cur.execute("DELETE FROM fts WHERE rowid=?", (cid,))
-        cur.execute("DELETE FROM chunks WHERE path=?", (path,))
-        for start, body in chunk_md(raw):
-            v = embed(body, is_query=False)
-            cur.execute(
-                "INSERT INTO chunks(source,path,line,txt,emb) VALUES (?,?,?,?,vector32(?))",
-                (source, path, start, body, str(v)))
-            cid = cur.lastrowid
-            cur.execute("INSERT INTO fts(rowid,txt) VALUES (?,?)", (cid, body))
-            n_chunks += 1
-        cur.execute("INSERT OR REPLACE INTO files(path,hash) VALUES (?,?)", (path, h))
-        con.commit()
+        n_chunks += _index_one_file(cur, source, root, path, raw, h)
+        if commit_each:
+            con.commit()
         print(f"  indexed {os.path.relpath(path, HOME)}", file=sys.stderr)
-    # drop files that disappeared
+    # Drop files that disappeared. Deletions are changes too: callers use the
+    # return value to decide whether `index --publish` must refresh readers.
     cur.execute("SELECT path FROM files")
     for (p,) in cur.fetchall():
         if p not in seen:
@@ -213,8 +400,124 @@ def cmd_index(rebuild=False):
                 cur.execute("DELETE FROM fts WHERE rowid=?", (cid,))
             cur.execute("DELETE FROM chunks WHERE path=?", (p,))
             cur.execute("DELETE FROM files WHERE path=?", (p,))
-    con.commit()
+            changed += 1
+            if commit_each:
+                con.commit()
+            print(f"  removed {os.path.relpath(p, HOME)}", file=sys.stderr)
     print(f"done. {changed} files changed, {n_chunks} chunks (re)embedded.", file=sys.stderr)
+    return changed
+
+
+def cmd_index(rebuild=False):
+    _refuse_if_readonly("index")
+    _validate_source_roots()
+    con, cur = connect()
+    if rebuild:
+        # One explicit transaction: an embedding, filesystem, or database
+        # interruption during a rebuild restores the previous index rather than
+        # leaving it half-wiped.
+        cur.execute("BEGIN IMMEDIATE")
+        try:
+            cur.execute("INSERT INTO fts(fts) VALUES (?)", ("delete-all",))
+            cur.execute("DELETE FROM chunks")
+            cur.execute("DELETE FROM files")
+            changed = _index_all_files(con, cur, commit_each=False)
+            con.commit()
+        except BaseException:
+            con.rollback()
+            raise
+        return changed
+    changed = _index_all_files(con, cur, commit_each=True)
+    con.commit()
+    return changed
+
+
+def _snapshot_needs_publish():
+    """Detect an unpublished writer DB after a prior publish failure."""
+    if not PUBLISH_PATH or not os.path.exists(PUBLISH_PATH):
+        return True
+    if os.path.exists(PUBLISH_PATH + ".tmp"):
+        return True
+    try:
+        return os.stat(DB_PATH).st_mtime_ns > os.stat(PUBLISH_PATH).st_mtime_ns
+    except OSError:
+        return True
+
+
+def cmd_publish():
+    """Publish a clean, WAL-free snapshot of the DB for Syncthing to replicate.
+    VACUUM INTO writes a fresh single file; os.replace makes it appear atomically
+    so readers (and Syncthing) never observe a half-written database. A failed
+    VACUUM INTO leaves the current published snapshot untouched."""
+    _refuse_if_readonly("publish")
+    if not PUBLISH_PATH:
+        print("recall: no publish_path configured. Set it in config.json on the "
+              "writer to enable shared-snapshot publishing.", file=sys.stderr)
+        raise SystemExit(2)
+    os.makedirs(os.path.dirname(PUBLISH_PATH), exist_ok=True)
+    temporary = PUBLISH_PATH + ".tmp"
+    if os.path.exists(temporary):
+        os.remove(temporary)               # VACUUM INTO requires a non-existent target
+    connection, cursor = connect()
+    cursor.execute(f"VACUUM INTO {_sql_literal(temporary)}")
+    connection.commit()
+    connection.close()
+    os.replace(temporary, PUBLISH_PATH)     # atomic publish
+    print(f"published snapshot -> {PUBLISH_PATH} "
+          f"({os.path.getsize(PUBLISH_PATH)//1024} KB)", file=sys.stderr)
+
+def cmd_add(text, source="cli", title=None, publish=False):
+    """Write a new memory as a markdown note into the synced corpus, then (on a
+    writer) index it. Writes are plain text — Syncthing merges them safely — so
+    ANY machine, reader or writer, may add. On a reader the note simply syncs to
+    the writer, which indexes it on its next pass. Provenance lives in YAML
+    frontmatter, quoted through `_yaml_scalar` so colons/quotes stay valid."""
+    text = (text or "").strip()
+    if not text:
+        print("recall: nothing to add (empty text).", file=sys.stderr)
+        raise SystemExit(2)
+    from datetime import datetime
+    inbox = CFG["inbox"]
+    _require_indexed_inbox(inbox)
+    os.makedirs(inbox, exist_ok=True)
+    now = datetime.now()
+    h = hashlib.sha1((text + now.isoformat()).encode()).hexdigest()[:6]
+    fp = os.path.join(inbox, f"{now:%Y%m%d-%H%M%S}-{h}.md")
+    fm = ["---", f"added: {now.isoformat(timespec='seconds')}",
+          f"source: {_yaml_scalar(source)}"]
+    if title:
+        fm.append(f"title: {_yaml_scalar(title)}")
+    fm.append("---")
+    body = "\n".join(fm) + "\n\n" + (f"# {title}\n\n" if title else "") + text + "\n"
+    # Always persist the note before touching the index: a later embed/schema
+    # failure must never lose the capture.
+    with open(fp, "w", encoding="utf-8") as handle:
+        handle.write(body)
+    shown = os.path.relpath(fp, HOME) if fp.startswith(HOME) else fp
+    print(f"added {shown}", file=sys.stderr)
+    if READ_ONLY:
+        print("recall: reader machine — note written to the synced corpus; the "
+              "writer indexes it on its next reindex.", file=sys.stderr)
+    else:
+        indexed = False
+        try:
+            cmd_index()
+            indexed = True
+        except EmbedUnavailable as e:
+            print(f"recall: note saved; indexing deferred (embed unavailable: {e})",
+                  file=sys.stderr)
+        if publish:
+            # Only publish once the note is actually in the index. Publishing a
+            # deferred-index db would ship a snapshot that omits the note we
+            # just added; re-run `index --publish` once the embedder is back.
+            if indexed:
+                cmd_publish()
+            else:
+                print("recall: publish skipped — index was deferred; run "
+                      "'index --publish' once the embedder is reachable.",
+                      file=sys.stderr)
+    print(fp)                                 # stdout: the path, for callers/agents
+    return fp
 
 def fts_query(q):
     # safe FTS5: quote each alnum token, OR them
@@ -222,31 +525,49 @@ def fts_query(q):
     toks = [t for t in toks if len(t) > 1]
     return " OR ".join(f'"{t}"' for t in toks) or '""'
 
-def cmd_recall(q, k=5, pool=20, hybrid=False):
+def _fts_ids(cur, q, pool):
+    """Keyword recall that survives a damaged FTS5 rank: try ranked, then
+    unranked, then give up cleanly. FTS auxiliary metadata can be corrupted
+    independently of the postings; keyword recall should degrade, not crash.
+
+    Both `ValueError` and `sqlite3.DatabaseError` are caught on purpose: the
+    libsql build raises `ValueError` for DB-level errors, stock sqlite3 raises
+    `DatabaseError`. Do not narrow this to one of them."""
+    try:
+        cur.execute("SELECT rowid FROM fts WHERE fts MATCH ? ORDER BY rank LIMIT ?",
+                    (fts_query(q), pool))
+        return [r[0] for r in cur.fetchall()]
+    except (ValueError, sqlite3.DatabaseError) as e:
+        print(f"recall: keyword ranking unavailable ({e}); using unranked keywords.",
+              file=sys.stderr)
+    try:
+        cur.execute("SELECT rowid FROM fts WHERE fts MATCH ? LIMIT ?",
+                    (fts_query(q), pool))
+        return [r[0] for r in cur.fetchall()]
+    except (ValueError, sqlite3.DatabaseError) as e:
+        print(f"recall: keyword arm unavailable ({e}); semantic-only.", file=sys.stderr)
+        return []
+
+def cmd_recall(q, k=5, pool=20, mode=None):
+    _require_reader_snapshot()
     con, cur = connect()
-    # Default ranking is VECTOR-ONLY. On this short, semantically-distinct memory
-    # corpus, two benchmarks (bench_quality.py and the adversarial new-memory set)
-    # show pure vector beats RRF hybrid — keyword fusion drags near-miss files up
-    # and pollutes the fused rank (e.g. near-duplicate topical memories). Pass
-    # hybrid=True (--hybrid) to restore RRF for noisier/larger corpora.
-    # If the embedder is down/unreachable, degrade to FTS-only instead of crashing.
+    mode = (mode or RETRIEVAL_MODE)
+    # vector ranking: exact brute-force cosine scan (libSQL native fn). If the
+    # embedder is unreachable, degrade to keyword-only instead of crashing.
     vec_ids = []
     try:
         qv = str(embed(q, is_query=True))
-        # vector ranking: exact brute-force cosine scan (Turso native fn)
         cur.execute("""SELECT id FROM chunks
                        ORDER BY vector_distance_cos(emb, vector32(?)) LIMIT ?""", (qv, pool))
         vec_ids = [r[0] for r in cur.fetchall()]
-    except (urllib.error.URLError, ConnectionError, OSError) as e:
+    except EmbedUnavailable as e:
         print(f"recall: embedder unavailable ({e}); falling back to keyword-only.",
               file=sys.stderr)
-    # keyword ranking (always computed: used for V+K tagging, hybrid fusion, and
-    # as the sole signal when the embedder is unavailable)
-    cur.execute(f"""SELECT rowid FROM fts WHERE fts MATCH ? ORDER BY rank LIMIT ?""",
-                (fts_query(q), pool))
-    fts_ids = [r[0] for r in cur.fetchall()]
-    if hybrid or not vec_ids:
-        # reciprocal rank fusion (or FTS-only when the embedder is down)
+    # keyword ranking is always computed: V+K tagging, hybrid fusion, and the sole
+    # signal when the embedder is down.
+    fts_ids = _fts_ids(cur, q, pool)
+    if mode == "hybrid" or not vec_ids:
+        # reciprocal rank fusion (or keyword-only when the embedder is down)
         scores = {}
         for rank, cid in enumerate(vec_ids):
             scores[cid] = scores.get(cid, 0) + 1.0 / (RRF_K + rank)
@@ -254,39 +575,79 @@ def cmd_recall(q, k=5, pool=20, hybrid=False):
             scores[cid] = scores.get(cid, 0) + 1.0 / (RRF_K + rank)
         top = sorted(scores, key=scores.get, reverse=True)[:k]
     else:
-        # vector-primary: rank by cosine, keep vector order intact
+        # vector mode: cosine order is authoritative
         top = vec_ids[:k]
     if not top:
         print("(no matches)")
         return
+    cols = _chunk_select_columns(cur)
     for cid in top:
-        cur.execute("SELECT source,path,line,txt FROM chunks WHERE id=?", (cid,))
-        source, path, line, txt = cur.fetchall()[0]
-        rel = os.path.relpath(path, HOME)
+        cur.execute(f"SELECT {cols} FROM chunks WHERE id=?", (cid,))
+        source, path, rel, line, txt = cur.fetchall()[0]
+        cite = _citation(source, path, rel)
         snippet = textwrap.shorten(txt.replace("\n", " "), width=280, placeholder=" …")
         tag = "V+K" if cid in vec_ids and cid in fts_ids else ("V" if cid in vec_ids else "K")
-        print(f"[{tag}] ~/{rel}:{line}\n    {snippet}\n")
+        print(f"[{tag}] {cite}:{line}\n    {snippet}\n")
+
+def _display_endpoint(url):
+    """Sanitized embedder endpoint for `stats`: scheme://host[:port]/path only.
+    Drops userinfo, query strings, and fragments so tokens never surface."""
+    parsed = urlsplit(url)
+    host = parsed.hostname or "unknown"
+    port = f":{parsed.port}" if parsed.port else ""
+    return f"{parsed.scheme}://{host}{port}{parsed.path}"
 
 def cmd_stats():
+    role = "reader" if READ_ONLY else "writer"
+    print(f"db={DB_PATH}")
+    print(f"role={role}")
+    print(f"retrieval_mode={RETRIEVAL_MODE}")
+    print(f"embedder={_display_endpoint(EMBED_URL)}")
+    if READ_ONLY and not os.path.exists(DB_PATH):
+        print("snapshot=missing (the writer must publish and file-sync must finish)")
+        print("files=unavailable chunks=unavailable size=0KB")
+        return
     con, cur = connect()
     cur.execute("SELECT COUNT(*),COUNT(DISTINCT path) FROM chunks")
     c, f = cur.fetchall()[0]
     sz = os.path.getsize(DB_PATH) if os.path.exists(DB_PATH) else 0
-    print(f"db={DB_PATH}\nfiles={f} chunks={c} size={sz/1024:.0f}KB")
+    print(f"files={f} chunks={c} size={sz/1024:.0f}KB")
+    if PUBLISH_PATH:
+        pub_sz = os.path.getsize(PUBLISH_PATH) if os.path.exists(PUBLISH_PATH) else 0
+        print(f"publish_path={PUBLISH_PATH} ({pub_sz/1024:.0f}KB)")
 
 # ---- cli --------------------------------------------------------------------
-if __name__ == "__main__":
+def _cli(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd_or_query")
     ap.add_argument("rest", nargs="*")
     ap.add_argument("-k", type=int, default=5)
     ap.add_argument("--rebuild", action="store_true")
+    ap.add_argument("--vector", action="store_true",
+                    help="force vector-only ranking for this query")
     ap.add_argument("--hybrid", action="store_true",
-                    help="use RRF hybrid (vector+keyword) instead of the default vector-only ranking")
-    a = ap.parse_args()
-    if a.cmd_or_query == "index":
-        cmd_index(rebuild=a.rebuild)
-    elif a.cmd_or_query == "stats":
+                    help="force RRF hybrid (vector+keyword) ranking for this query")
+    ap.add_argument("--publish", action="store_true")
+    ap.add_argument("--source", default="cli")
+    ap.add_argument("--title")
+    args = ap.parse_args(argv)
+    if args.vector and args.hybrid:
+        ap.error("--vector and --hybrid are mutually exclusive")
+    mode = "vector" if args.vector else ("hybrid" if args.hybrid else None)
+
+    if args.cmd_or_query == "index":
+        changed = cmd_index(rebuild=args.rebuild)
+        if args.publish and (changed > 0 or args.rebuild or _snapshot_needs_publish()):
+            cmd_publish()
+    elif args.cmd_or_query == "publish":
+        cmd_publish()
+    elif args.cmd_or_query == "add":
+        cmd_add(" ".join(args.rest), source=args.source, title=args.title, publish=args.publish)
+    elif args.cmd_or_query == "stats":
         cmd_stats()
     else:
-        cmd_recall(" ".join([a.cmd_or_query, *a.rest]), k=a.k, hybrid=a.hybrid)
+        cmd_recall(" ".join([args.cmd_or_query, *args.rest]), k=args.k, mode=mode)
+
+
+if __name__ == "__main__":
+    _cli()

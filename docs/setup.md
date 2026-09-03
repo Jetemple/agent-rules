@@ -66,9 +66,10 @@ things:
    committed. It lives outside the repo so the guard never encodes your identity.
 
 ## 3. recall corpus bootstrap
-`install.sh` links the canonical recall code and support files into `~/.recall`; the venv,
-`config.json`, and `memory.db` remain device-local. Build the venv under `~/.recall`, not inside
-the repo checkout:
+`install.sh` seeds `~/.recall/recall.py` and friends once (a `copy_once` step). The seeded
+`recall.py` is `tools/recall/launcher.py` — a stable launcher that execs the canonical engine
+(`tools/recall/recall.py`) from this checkout. Build the venv in `~/.recall`, not inside the
+repo checkout:
 
 ```sh
 cd ~/.recall
@@ -83,9 +84,13 @@ The example config points at `~/notes/memory` and `~/notes/vault` — edit to yo
 dirs, or `mkdir -p ~/notes/memory` to start empty. The index does **not** auto-build on first
 query.
 
-Repo updates to recall code propagate through the installed symlinks. Device-specific state
-(`.venv`, `config.json`, `memory.db`) remains under `~/.recall` and is never linked or committed.
-`memory.db` is a derived index.
+Repo updates to `tools/recall/recall.py` **do** propagate automatically: the seeded
+`~/.recall/recall.py` is only a launcher, and it execs the engine from this checkout on every
+run. Only `~/.recall/config.json`, `.venv`, and `memory.db` are device-local. Set
+`AGENT_RULES_HOME` if the checkout is not at `~/.agent-rules`. An existing pre-launcher
+`~/.recall/recall.py` is never overwritten by `install.sh`; migrating it to the launcher is a
+gated step (back it up, run the engine's own tests, confirm private-benchmark retrieval
+parity, get explicit approval). `~/.recall/memory.db` is a derived index — never commit it.
 
 ## 4. Verify
 ```sh
