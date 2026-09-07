@@ -38,7 +38,7 @@ python3 ~/.recall/recall.py index                      # incremental reindex (on
 python3 ~/.recall/recall.py index --rebuild            # wipe + full reindex (after changing embed model)
 python3 ~/.recall/recall.py index --publish            # reindex, then publish a snapshot (writer only)
 python3 ~/.recall/recall.py publish                    # publish a fresh snapshot from the current db (writer only)
-python3 ~/.recall/recall.py add "durable fact" --title "short title"   # write a dated intake note
+printf '%s\n' 'durable fact' | python3 ~/.recall/recall.py add --stdin --title 'short title'  # write a dated intake note
 python3 ~/.recall/recall.py stats                      # db path, role, retrieval mode, embedder, counts
 ```
 
@@ -70,6 +70,28 @@ excluded by default because catalogs commonly duplicate source notes. A project 
 has not migrated unique catalog-only content may temporarily set "exclude_files": []
 in its private config; migrate that content before restoring the default.
 ```
+
+### Corpus scoping (`exclude_dirs`)
+
+Retrieval ranks every indexed chunk equally, so a corpus dominated by transient
+material (dated reports, unreviewed capture queues, staged inbox writes) will surface
+that material ahead of canonical pages. `exclude_dirs` keeps those subtrees out of the
+index:
+
+```jsonc
+"exclude_dirs": ["00_inbox/_reports", "00_inbox/_capture_queue", "_inbox"]
+```
+
+Entries are **source-relative directory prefixes**, applied under every configured
+source root. `"a/b"`, `"/a/b"`, and `"./a/b/"` normalize identically, and the whole
+subtree below a match is pruned. Matching is per path segment, so `"_reports"` never
+swallows a sibling `"_reportsmith"`.
+
+This is deliberately binary: an excluded subtree becomes unreachable from recall, so
+exclude only what you would not want cited as an answer. Historical material you still
+want to reach occasionally is a better fit for a future scoped search than for
+exclusion. A small hard-coded set (`_scratch`, `_archive`, `.git`, `node_modules`,
+`.obsidian`, `_recall`) is always excluded regardless of config.
 
 ### Runtime layout
 

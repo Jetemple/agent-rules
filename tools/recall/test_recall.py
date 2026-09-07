@@ -551,6 +551,32 @@ class RecallDispatchTests(unittest.TestCase):
                 module._cli(["add", "some", "fact", "--title", "T", "--source", "chat", "--publish"])
             add.assert_called_once_with("some fact", source="chat", title="T", publish=True)
 
+    def test_add_stdin_preserves_shell_sensitive_multiline_text(self):
+        with tempfile.TemporaryDirectory() as td:
+            module = self._module(td)
+            text = "It's $144 total.\nKeep `literal` and ! unchanged."
+            with mock.patch.object(module, "cmd_add") as add, \
+                 mock.patch("sys.stdin", io.StringIO(text)):
+                module._cli(["add", "--stdin", "--title", "Costs", "--source", "chat"])
+            add.assert_called_once_with(text, source="chat", title="Costs", publish=False)
+
+    def test_add_stdin_rejects_positional_text(self):
+        with tempfile.TemporaryDirectory() as td:
+            module = self._module(td)
+            with contextlib.redirect_stderr(io.StringIO()), \
+                 self.assertRaises(SystemExit) as raised:
+                module._cli(["add", "positional", "--stdin"])
+            self.assertEqual(raised.exception.code, 2)
+
+    def test_add_stdin_empty_input_uses_existing_empty_text_error(self):
+        with tempfile.TemporaryDirectory() as td:
+            module = self._module(td)
+            with mock.patch("sys.stdin", io.StringIO("")), \
+                 contextlib.redirect_stderr(io.StringIO()), \
+                 self.assertRaises(SystemExit) as raised:
+                module._cli(["add", "--stdin"])
+            self.assertEqual(raised.exception.code, 2)
+
     def test_vector_flag_reaches_cmd_recall(self):
         with tempfile.TemporaryDirectory() as td:
             module = self._module(td)
@@ -720,3 +746,146 @@ class LauncherImportTests(unittest.TestCase):
             self.assertEqual(module.cmd_recall(), "engine-ok")
             self.assertEqual(module.SENTINEL, 42)
             self.assertNotIn("ENGINE MAIN", err.getvalue())
+
+
+class RecallExcludeDirsTests(unittest.TestCase):
+    """`exclude_dirs` keeps unreviewed/transient subtrees out of the corpus so they
+    stop out-ranking canonical pages. Entries are source-relative path prefixes."""
+
+    @staticmethod
+    def _corpus(root: Path):
+        for rel in (
+            "01_profile",
+            "00_inbox",
+            "00_inbox/_reports",
+            "00_inbox/_reports/2026/q3",
+            "00_inbox/_capture_queue",
+            "00_inbox/_reportsmith",
+            "_inbox",
+        ):
+            (root / rel).mkdir(parents=True, exist_ok=True)
+        for rel in (
+            "01_profile/now.md",
+            "00_inbox/capture.md",
+            "00_inbox/_reports/heartbeat.md",
+            "00_inbox/_reports/2026/q3/deep.md",
+            "00_inbox/_capture_queue/session.md",
+            "00_inbox/_reportsmith/keepme.md",
+            "_inbox/added.md",
+        ):
+            (root / rel).write_text("body", encoding="utf-8")
+
+    def _indexed(self, exclude_dirs, td):
+        home = Path(td)
+        root = home / "notes"
+        root.mkdir()
+        self._corpus(root)
+        config = {"sources": [{"label": "notes", "path": str(root)}]}
+        if exclude_dirs is not None:
+            config["exclude_dirs"] = exclude_dirs
+        module = load_engine(home, config)
+        return sorted(
+            os.path.relpath(path, root).replace(os.sep, "/")
+            for _, _, path in module.iter_files()
+        )
+
+    def test_relative_path_prefix_excludes_that_subtree_only(self):
+        with tempfile.TemporaryDirectory() as td:
+            self.assertEqual(
+                self._indexed(["00_inbox/_reports"], td),
+                ["00_inbox/_capture_queue/session.md",
+                 "00_inbox/_reportsmith/keepme.md",
+                 "00_inbox/capture.md",
+                 "01_profile/now.md",
+                 "_inbox/added.md"],
+            )
+
+    def test_trailing_and_leading_slashes_are_normalized(self):
+        for entry in ("00_inbox/_reports/", "/00_inbox/_reports", "./00_inbox/_reports//"):
+            with self.subTest(entry=entry), tempfile.TemporaryDirectory() as td:
+                indexed = self._indexed([entry], td)
+                self.assertNotIn("00_inbox/_reports/heartbeat.md", indexed)
+                self.assertIn("00_inbox/capture.md", indexed)
+
+    def test_nested_directories_under_an_excluded_prefix_are_pruned(self):
+        with tempfile.TemporaryDirectory() as td:
+            indexed = self._indexed(["00_inbox/_reports"], td)
+            self.assertNotIn("00_inbox/_reports/2026/q3/deep.md", indexed)
+
+    def test_a_descendant_path_matches_the_prefix_directly(self):
+        """The walk prunes at the parent, so nesting must be pinned on the
+        predicate itself: any depth under an excluded prefix is excluded, and a
+        parent of one is not."""
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            root = home / "notes"
+            root.mkdir()
+            module = load_engine(home, {
+                "sources": [{"label": "notes", "path": str(root)}],
+                "exclude_dirs": ["00_inbox/_reports"],
+            })
+            self.assertTrue(module._is_excluded_dir(("00_inbox", "_reports")))
+            self.assertTrue(module._is_excluded_dir(("00_inbox", "_reports", "2026")))
+            self.assertTrue(
+                module._is_excluded_dir(("00_inbox", "_reports", "2026", "q3")))
+            self.assertFalse(module._is_excluded_dir(("00_inbox",)))
+            self.assertFalse(module._is_excluded_dir(("00_inbox", "_reportsmith")))
+
+    def test_prefix_matches_whole_segments_not_string_prefixes(self):
+        """`_reports` must not swallow the sibling `_reportsmith`."""
+        with tempfile.TemporaryDirectory() as td:
+            indexed = self._indexed(["00_inbox/_reports"], td)
+            self.assertIn("00_inbox/_reportsmith/keepme.md", indexed)
+
+    def test_multiple_prefixes_including_a_top_level_one(self):
+        with tempfile.TemporaryDirectory() as td:
+            self.assertEqual(
+                self._indexed(
+                    ["00_inbox/_reports", "00_inbox/_capture_queue", "_inbox"], td),
+                ["00_inbox/_reportsmith/keepme.md",
+                 "00_inbox/capture.md",
+                 "01_profile/now.md"],
+            )
+
+    def test_default_is_no_directory_prefix_exclusions(self):
+        with tempfile.TemporaryDirectory() as td:
+            self.assertIn("00_inbox/_reports/heartbeat.md", self._indexed(None, td))
+
+    def test_constitution_dirs_stay_excluded_at_any_depth(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            root = home / "notes"
+            (root / "06_goals" / "_scratch").mkdir(parents=True)
+            (root / "06_goals" / "_scratch" / "junk.md").write_text("x", encoding="utf-8")
+            (root / "06_goals" / "plan.md").write_text("x", encoding="utf-8")
+            module = load_engine(home, {
+                "sources": [{"label": "notes", "path": str(root)}],
+                "exclude_dirs": ["00_inbox/_reports"],
+            })
+            self.assertEqual(
+                [Path(path).name for _, _, path in module.iter_files()], ["plan.md"])
+
+    def test_exclusion_is_relative_to_each_source_root(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            first, second = home / "vault", home / "mem"
+            for base in (first, second):
+                (base / "00_inbox" / "_reports").mkdir(parents=True)
+                (base / "00_inbox" / "_reports" / "r.md").write_text("x", encoding="utf-8")
+                (base / "keep.md").write_text("x", encoding="utf-8")
+            module = load_engine(home, {
+                "sources": [{"label": "vault", "path": str(first)},
+                            {"label": "mem", "path": str(second)}],
+                "exclude_dirs": ["00_inbox/_reports"],
+            })
+            self.assertEqual(
+                sorted(Path(path).name for _, _, path in module.iter_files()),
+                ["keep.md", "keep.md"])
+
+    def test_invalid_exclude_dirs_is_rejected(self):
+        with tempfile.TemporaryDirectory() as td:
+            with self.assertRaises(ValueError):
+                load_engine(Path(td), {
+                    "sources": [{"label": "notes", "path": "~/notes"}],
+                    "exclude_dirs": "00_inbox/_reports",
+                })

@@ -16,6 +16,7 @@ Usage:
   recall.py "query text"     # recall in the configured mode, prints citation:line + snippet
   recall.py "query" --hybrid # force RRF hybrid; --vector forces vector-only
   recall.py add "a durable fact" --title "short title" [--publish]
+  recall.py add --stdin --title "short title"  # safest for shell-sensitive text
   recall.py publish          # writer-only: refresh the synced snapshot
   recall.py stats
 Both Codex and Claude just shell out:  recall.py "how do I rebuild the index"
@@ -48,6 +49,9 @@ RRF_K     = 60            # reciprocal-rank-fusion constant
 #   inbox           str   where `add` writes new notes (default <first source>/_inbox)
 #   retrieval_mode  str   "vector" (default, portable) or "hybrid" (RRF fusion)
 #   exclude_files   [str] basenames never indexed (default ["MEMORY.md"])
+#   exclude_dirs    [str] source-relative directory prefixes never indexed, e.g.
+#                         ["00_inbox/_reports"]. Prunes the whole subtree. Matching
+#                         is per path segment, so "_reports" never hits "_reportsmith".
 #   embed_url       str   embeddings endpoint (OpenAI-compatible)
 #   embed_model     str   embeddings model id
 CONFIG_PATH = os.path.join(HOME, ".recall", "config.json")
@@ -82,6 +86,30 @@ def _string_list(value, default):
     if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
         raise ValueError("exclude_files must be a list of non-empty strings")
     return value
+
+def _dir_prefix_list(value):
+    """Normalize source-relative directory prefixes into tuples of path segments.
+
+    Accepts "a/b", "/a/b", "./a/b//", and OS-native separators alike. Segment
+    tuples (rather than strings) make the match whole-segment by construction,
+    so "00_inbox/_reports" cannot swallow a sibling "00_inbox/_reportsmith"."""
+    if value is None:
+        return set()
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise ValueError("exclude_dirs must be a list of relative directory paths")
+    prefixes = set()
+    for item in value:
+        segments = tuple(
+            part for part in item.strip().replace("\\", "/").split("/")
+            if part not in ("", ".")
+        )
+        if not segments:
+            raise ValueError(f"exclude_dirs entry is not a usable path: {item!r}")
+        if ".." in segments:
+            raise ValueError(f"exclude_dirs entry must stay inside the source: {item!r}")
+        prefixes.add(segments)
+    return prefixes
+
 
 def _parse_sources(obj):
     """Turn a {"sources":[{"label","path"}]} JSON object into [(label, path)]."""
@@ -130,6 +158,7 @@ def load_config():
         "inbox": _expand(raw.get("inbox")) or os.path.join(sources[0][1], "_inbox"),
         "retrieval_mode": retrieval_mode,
         "exclude_files": set(_string_list(raw.get("exclude_files"), ["MEMORY.md"])),
+        "exclude_dirs": _dir_prefix_list(raw.get("exclude_dirs")),
         "embed_url": _env("RECALL_EMBED_URL") or raw.get("embed_url") or "http://localhost:8080/v1/embeddings",
         "embed_model": _env("RECALL_EMBED_MODEL") or raw.get("embed_model") or "ggml-org/embeddinggemma-300M-GGUF:Q8_0",
     }
@@ -148,6 +177,7 @@ PUBLISH_PATH  = CFG["publish_path"]
 READ_ONLY     = CFG["read_only"]
 RETRIEVAL_MODE = CFG["retrieval_mode"]
 EXCLUDE_FILES = CFG["exclude_files"]
+EXCLUDE_DIR_PREFIXES = CFG["exclude_dirs"]
 EMBED_URL     = CFG["embed_url"]
 MODEL         = CFG["embed_model"]
 # Hard constitution rules: never index these. `_recall` holds the published DB
@@ -240,12 +270,26 @@ def _chunks_has_rel(cursor):
 def _chunk_select_columns(cursor):
     return "source,path,rel,line,txt" if _chunks_has_rel(cursor) else "source,path,NULL AS rel,line,txt"
 
+def _relative_segments(directory, root):
+    relative = os.path.relpath(directory, root)
+    if relative == os.curdir:
+        return ()
+    return tuple(part for part in relative.split(os.sep) if part not in ("", os.curdir))
+
+
+def _is_excluded_dir(segments):
+    return any(segments[:len(prefix)] == prefix for prefix in EXCLUDE_DIR_PREFIXES)
+
+
 def iter_files():
     for source, root in SOURCES:
         if not os.path.isdir(root):
             continue
         for directory, dirs, files in os.walk(root):
-            dirs[:] = [name for name in dirs if name not in EXCLUDE_DIRS]
+            here = _relative_segments(directory, root)
+            dirs[:] = [name for name in dirs
+                       if name not in EXCLUDE_DIRS
+                       and not _is_excluded_dir(here + (name,))]
             for name in sorted(files):
                 if name.endswith(".md") and name not in EXCLUDE_FILES:
                     yield source, root, os.path.join(directory, name)
@@ -531,9 +575,13 @@ def _cli(argv=None):
     ap.add_argument("--publish", action="store_true")
     ap.add_argument("--source", default="cli")
     ap.add_argument("--title")
+    ap.add_argument("--stdin", action="store_true",
+                    help="read add text from standard input")
     args = ap.parse_args(argv)
     if args.vector and args.hybrid:
         ap.error("--vector and --hybrid are mutually exclusive")
+    if args.stdin and args.cmd_or_query != "add":
+        ap.error("--stdin is only valid with add")
     mode = "vector" if args.vector else ("hybrid" if args.hybrid else None)
 
     if args.cmd_or_query == "index":
@@ -543,7 +591,10 @@ def _cli(argv=None):
     elif args.cmd_or_query == "publish":
         cmd_publish()
     elif args.cmd_or_query == "add":
-        cmd_add(" ".join(args.rest), source=args.source, title=args.title, publish=args.publish)
+        if args.stdin and args.rest:
+            ap.error("add --stdin does not accept positional text")
+        text = sys.stdin.read() if args.stdin else " ".join(args.rest)
+        cmd_add(text, source=args.source, title=args.title, publish=args.publish)
     elif args.cmd_or_query == "stats":
         cmd_stats()
     else:
