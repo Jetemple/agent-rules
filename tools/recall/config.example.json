@@ -9,6 +9,7 @@
   "inbox": "~/notes/memory/_inbox",
   "retrieval_mode": "vector",
   "exclude_files": ["MEMORY.md"],
+  "exclude_dirs": ["00_inbox/_reports", "00_inbox/_capture_queue", "_inbox"],
   "embed_url": "http://localhost:8080/v1/embeddings",
   "embed_model": "ggml-org/embeddinggemma-300M-GGUF:Q8_0"
 }
