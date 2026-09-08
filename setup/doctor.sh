@@ -138,6 +138,13 @@ else
   done <<< "$prompt_output"
 fi
 
+echo "== pi extensions: bounded agents extension is linked =="
+if [ -d "$HOME/.pi/agent" ]; then
+  check_link "$HOME/.pi/agent/extensions/agents" "$REPO/extensions/pi/agents"
+else
+  echo "skip (not installed): pi ($HOME/.pi/agent absent)"
+fi
+
 echo "== claude: personal overlay imports the hub =="
 # Claude is special-cased (see map header): ~/.claude/AGENTS.md is a PERSONAL real file that
 # @imports core.md, and ~/.claude/CLAUDE.md symlinks to it.

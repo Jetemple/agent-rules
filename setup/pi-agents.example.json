@@ -1,0 +1,24 @@
+{
+  "models": {
+    "luna": {
+      "provider": "openai-codex",
+      "id": "gpt-5.6-luna"
+    },
+    "terra": {
+      "provider": "openai-codex",
+      "id": "gpt-5.6-terra"
+    },
+    "sol": {
+      "provider": "openai-codex",
+      "id": "gpt-5.6-sol"
+    },
+    "opus": {
+      "provider": "anthropic",
+      "id": "claude-opus-5"
+    },
+    "sonnet": {
+      "provider": "anthropic",
+      "id": "claude-sonnet-5"
+    }
+  }
+}

@@ -55,15 +55,31 @@ things:
    its runtime's prompt dir (`pi` → `~/.pi/agent/prompts`). A byte-identical real file is
    adopted into a link; a differing one is left alone and reported. Validated whole, like
    the workflow map.
-4. Special-cases Claude: creates a core-only `~/.claude/AGENTS.md` stub (with an
+4. Links the bounded Pi agents extension into `~/.pi/agent/extensions/agents`. A pre-existing
+   real directory is never overwritten; reconcile or move it first.
+5. Special-cases Claude: creates a core-only `~/.claude/AGENTS.md` stub (with an
    `@…/core.md` import line) if absent, and links `~/.claude/CLAUDE.md` → `AGENTS.md`. An
    existing personal file is never touched.
-5. Installs the privacy-guard pre-commit hook. An executable
+6. Installs the privacy-guard pre-commit hook. An executable
    `~/.config/agent-rules/pre-commit-extra` may add private machine-specific checks; it runs
    before, never instead of, the canonical guard.
-6. Creates a stub `~/.config/agent-rules/private-patterns` if absent — **edit it**: add your
+7. Creates a stub `~/.config/agent-rules/private-patterns` if absent — **edit it**: add your
    name, handles, and employer as regexes so `check-privacy.sh` blocks them from ever being
    committed. It lives outside the repo so the guard never encodes your identity.
+
+### Optional: configure Pi subagent models
+
+The Pi agents extension has public defaults for its Luna, Terra, Sol, Opus, and Sonnet aliases.
+To use different model IDs or private provider extensions, create a machine-local config:
+
+```sh
+mkdir -p ~/.config/agent-rules
+cp setup/pi-agents.example.json ~/.config/agent-rules/pi-agents.json
+$EDITOR ~/.config/agent-rules/pi-agents.json
+```
+
+See `extensions/pi/agents/README.md` for the schema and security boundary. Keep private
+endpoints and organization-specific provider details outside this public repo.
 
 ## 3. recall corpus bootstrap
 `install.sh` links the canonical recall code and support files into `~/.recall`; the venv,

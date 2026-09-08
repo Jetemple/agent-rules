@@ -166,6 +166,14 @@ while read -r name source targets; do
 done <<< "$prompt_output"
 
 echo
+echo "== pi extensions: link the bounded agents extension =="
+if [ -d "$HOME/.pi/agent" ]; then
+  link "$REPO/extensions/pi/agents" "$HOME/.pi/agent/extensions/agents"
+else
+  echo "skip (not installed): pi ($HOME/.pi/agent absent)"
+fi
+
+echo
 echo "== claude: personal overlay (core-only stub if absent; never clobbered) =="
 CLAUDE_DIR="$HOME/.claude"
 if [ -d "$CLAUDE_DIR" ]; then

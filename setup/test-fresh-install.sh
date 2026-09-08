@@ -123,6 +123,8 @@ echo "== spot-check the wiring doctor is supposed to verify =="
 grep -qF '# >>> agent-rules hub' "$HOME/.codex/AGENTS.md" || fail "codex block not written (mode=block)"
 [ -L "$HOME/.claude/CLAUDE.md" ] || fail "claude CLAUDE.md -> AGENTS.md symlink missing"
 grep -q "^@$REPO/core.md" "$HOME/.claude/AGENTS.md" || fail "claude AGENTS.md missing hub import"
+[ "$(readlink "$HOME/.pi/agent/extensions/agents")" = "$REPO/extensions/pi/agents" ] \
+  || fail "Pi agents extension not linked"
 [ -x "$HOME/.claude/statusline.sh" ] || fail "statusline.sh not seeded/executable"
 [ -L "$HOME/.recall/recall.py" ] || fail ".recall/recall.py not linked"
 [ "$(readlink "$HOME/.recall/recall.py")" = "$REPO/tools/recall/recall.py" ] \

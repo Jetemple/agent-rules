@@ -20,6 +20,7 @@ tool's load-point back at the hub. Edit the hub once, every agent gets it. A new
 | `rules/` | composable rule snippets |
 | `workflows/` | own generic skills (`council`, `drain-memory`, `handoff`, `wrap`, `your-voice`) |
 | `setup/` | `install.sh`, `doctor.sh`, example configs (macOS/zsh) |
+| `extensions/pi/agents/` | bounded read-only `delegate` and multi-model `council` tools for Pi |
 | `tools/recall/` | a semantic memory-recall CLI |
 
 ## Quick start
@@ -51,6 +52,11 @@ Runtime-specific slash-command prompt templates (Pi's `/goal`, for now) are regi
 invocation and interpolation syntax is runtime-specific. A pre-existing real file that is
 byte-identical to the repo copy is adopted (replaced by the link); a differing one is left
 alone and reported.
+
+The installer also links the repo's bounded Pi agents extension to
+`~/.pi/agent/extensions/agents`. It provides `delegate` and `council` tools backed by isolated,
+read-only child Pi processes. Model aliases can be overridden in the private
+`~/.config/agent-rules/pi-agents.json`; see `extensions/pi/agents/README.md`.
 
 ## Dependencies (not republished here)
 
