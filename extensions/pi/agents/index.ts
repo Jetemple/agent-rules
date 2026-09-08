@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
@@ -9,69 +8,22 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
 import { Markdown, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import {
+  loadAgentsConfig,
+  type ModelDefinition,
+} from "./config.js";
 
-const MODEL_ALIASES = ["luna", "terra", "sol", "opus", "sonnet"] as const;
+const AGENTS_CONFIG = loadAgentsConfig();
+type ModelName = string;
+
+const MODEL_ALIASES = Object.keys(AGENTS_CONFIG.models) as [string, ...string[]];
 const ROLES = ["scout", "reviewer", "skeptic"] as const;
 
-type ModelAlias = (typeof MODEL_ALIASES)[number];
-type ModelConfig = {
-  provider: string;
-  id: string;
-  extensions?: string[];
-};
+type ModelAlias = ModelName;
+const MODEL_CONFIGS: Readonly<Record<string, Readonly<ModelDefinition>>> = AGENTS_CONFIG.models;
+const DEFAULT_COUNCIL = AGENTS_CONFIG.defaults.council;
 
-const DEFAULT_MODEL_CONFIGS: Record<ModelAlias, ModelConfig> = {
-  luna: { provider: "openai-codex", id: "gpt-5.6-luna" },
-  terra: { provider: "openai-codex", id: "gpt-5.6-terra" },
-  sol: { provider: "openai-codex", id: "gpt-5.6-sol" },
-  opus: { provider: "anthropic", id: "claude-opus-5" },
-  sonnet: { provider: "anthropic", id: "claude-sonnet-5" },
-};
-
-function expandHome(filePath: string): string {
-  if (filePath === "~") return os.homedir();
-  if (filePath.startsWith("~/")) return path.join(os.homedir(), filePath.slice(2));
-  return filePath;
-}
-
-function loadModelConfigs(): Record<ModelAlias, ModelConfig> {
-  const configPath = expandHome(
-    process.env.PI_AGENTS_CONFIG ??
-      path.join(process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), ".config"), "agent-rules", "pi-agents.json"),
-  );
-  if (!fs.existsSync(configPath)) return DEFAULT_MODEL_CONFIGS;
-
-  const parsed = JSON.parse(fs.readFileSync(configPath, "utf8")) as { models?: Record<string, unknown> };
-  if (!parsed.models || typeof parsed.models !== "object") {
-    throw new Error(`${configPath}: expected a top-level \"models\" object`);
-  }
-
-  const configs = { ...DEFAULT_MODEL_CONFIGS };
-  for (const alias of MODEL_ALIASES) {
-    const candidate = parsed.models[alias];
-    if (candidate === undefined) continue;
-    if (!candidate || typeof candidate !== "object") {
-      throw new Error(`${configPath}: models.${alias} must be an object`);
-    }
-    const value = candidate as Record<string, unknown>;
-    if (typeof value.provider !== "string" || !value.provider || typeof value.id !== "string" || !value.id) {
-      throw new Error(`${configPath}: models.${alias} requires non-empty provider and id strings`);
-    }
-    if (value.extensions !== undefined && (!Array.isArray(value.extensions) || value.extensions.some((item) => typeof item !== "string"))) {
-      throw new Error(`${configPath}: models.${alias}.extensions must be an array of paths`);
-    }
-    configs[alias] = {
-      provider: value.provider,
-      id: value.id,
-      extensions: (value.extensions as string[] | undefined)?.map(expandHome),
-    };
-  }
-  return configs;
-}
-
-const MODEL_CONFIGS = loadModelConfigs();
 const THINKING_LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
-const DEFAULT_COUNCIL = ["luna", "sol", "opus", "sonnet"] as const;
 const MAX_COUNCIL_MEMBERS = 5;
 const MAX_CONCURRENCY = 2;
 const OUTPUT_CAP_BYTES = 12 * 1024;
