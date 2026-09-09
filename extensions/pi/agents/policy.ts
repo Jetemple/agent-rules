@@ -10,11 +10,13 @@ export type ModelRoute = Readonly<{
 export type ProjectPolicy = Readonly<{
   path: string;
   allowedModels: readonly ModelRoute[];
+  council?: readonly string[];
 }>;
 
 const POLICY_RELATIVE_PATH = path.join(".pi", "pi-agents-policy.json");
-const POLICY_KEYS = new Set(["version", "allowedModels"]);
+const POLICY_KEYS = new Set(["version", "allowedModels", "council"]);
 const ROUTE_KEYS = new Set(["provider", "id"]);
+const COUNCIL_NAME = /^[a-z][a-z0-9-]{0,31}$/;
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -82,9 +84,31 @@ function parsePolicy(policyPath: string, displayPath = policyPath): ProjectPolic
     routes.push(Object.freeze({ provider: rawRoute.provider, id: rawRoute.id }));
   }
 
+  let council: string[] | undefined;
+  if (hasOwn(parsed, "council")) {
+    if (!Array.isArray(parsed.council)) invalid(displayPath, "council must be an array");
+    if (parsed.council.length < 2 || parsed.council.length > 5) {
+      invalid(displayPath, "council must contain 2 to 5 members");
+    }
+
+    council = [];
+    const councilNames = new Set<string>();
+    for (const [index, rawName] of parsed.council.entries()) {
+      if (typeof rawName !== "string" || !COUNCIL_NAME.test(rawName)) {
+        invalid(displayPath, `council[${index}] must be a valid model name`);
+      }
+      if (councilNames.has(rawName)) {
+        invalid(displayPath, `council must contain unique members; duplicate member '${rawName}'`);
+      }
+      councilNames.add(rawName);
+      council.push(rawName);
+    }
+  }
+
   return Object.freeze({
     path: fs.realpathSync(policyPath),
     allowedModels: Object.freeze(routes),
+    ...(council === undefined ? {} : { council: Object.freeze(council) }),
   });
 }
 

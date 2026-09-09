@@ -55,8 +55,9 @@ alone and reported.
 
 The installer also links the repo's bounded Pi agents extension to
 `~/.pi/agent/extensions/agents`. It provides `delegate` and `council` tools backed by isolated,
-read-only child Pi processes. Model aliases can be overridden in the private
-`~/.config/agent-rules/pi-agents.json`; see `extensions/pi/agents/README.md`.
+read-only child Pi processes. Model routes and the normal council roster are configured together
+in the private `~/.config/agent-rules/pi-agents.json`; protected projects can add exact-route
+policies. See `extensions/pi/agents/README.md`.
 
 ## Dependencies (not republished here)
 

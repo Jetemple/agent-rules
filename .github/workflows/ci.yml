@@ -51,3 +51,13 @@ jobs:
       - uses: actions/checkout@v4
       - name: Simulate a fresh machine (isolated $HOME, fake tool dirs) and run install.sh + doctor.sh
         run: bash setup/test-fresh-install.sh
+
+  agents-extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Test bounded Pi agents configuration, policy, and runtime
+        run: bun test extensions/pi/agents
