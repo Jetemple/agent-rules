@@ -55,15 +55,54 @@ things:
    its runtime's prompt dir (`pi` → `~/.pi/agent/prompts`). A byte-identical real file is
    adopted into a link; a differing one is left alone and reported. Validated whole, like
    the workflow map.
-4. Special-cases Claude: creates a core-only `~/.claude/AGENTS.md` stub (with an
+4. Links the bounded Pi agents extension into `~/.pi/agent/extensions/agents`. A pre-existing
+   real directory is never overwritten; reconcile or move it first.
+5. Special-cases Claude: creates a core-only `~/.claude/AGENTS.md` stub (with an
    `@…/core.md` import line) if absent, and links `~/.claude/CLAUDE.md` → `AGENTS.md`. An
    existing personal file is never touched.
-5. Installs the privacy-guard pre-commit hook. An executable
+6. Installs the privacy-guard pre-commit hook. An executable
    `~/.config/agent-rules/pre-commit-extra` may add private machine-specific checks; it runs
    before, never instead of, the canonical guard.
-6. Creates a stub `~/.config/agent-rules/private-patterns` if absent — **edit it**: add your
+7. Creates a stub `~/.config/agent-rules/private-patterns` if absent — **edit it**: add your
    name, handles, and employer as regexes so `check-privacy.sh` blocks them from ever being
    committed. It lives outside the repo so the guard never encodes your identity.
+
+### Optional: configure Pi model routes and project policy
+
+The Pi agents extension uses safe public defaults when its machine-local catalog is absent. When
+`~/.config/agent-rules/pi-agents.json` is present, it is authoritative and defines the complete
+model catalog plus the default delegate roles and council roster. Copy the generic example, replace
+its values locally, then reload Pi:
+
+```sh
+mkdir -p ~/.config/agent-rules
+cp setup/pi-agents.example.json ~/.config/agent-rules/pi-agents.json
+$EDITOR ~/.config/agent-rules/pi-agents.json
+```
+
+The model keys are the exact names accepted by the `delegate.model` and `council.members` tools.
+Defaults must reference configured names. Model entries use exact `provider` and `id` routes,
+optional trusted provider-extension paths, and optional council perspectives. Run `/reload` or
+start a fresh Pi session after changing the catalog because schemas are built at extension load.
+
+A protected project may add `.pi/pi-agents-policy.json`, using the generic example as a starting
+point:
+
+```sh
+mkdir -p .pi
+cp setup/pi-agents-policy.example.json .pi/pi-agents-policy.json
+$EDITOR .pi/pi-agents-policy.json
+```
+
+The policy's `allowedModels` compares exact provider/ID tuples, not configured names. An optional
+`council` array selects the scoped default and must contain two to five unique, order-sensitive
+configured names. Policies nearest to both the parent session CWD and requested child CWD apply;
+their route allowlists intersect and conflicting council arrays fail closed. Explicit council
+members bypass scoped default selection, not route authorization. Malformed policies and denied
+routes reject before any child starts. A project without a policy retains global behavior, which
+is not a privacy guarantee. Keep private endpoints, provider details, extensions, and project
+policies outside this public repo. See `extensions/pi/agents/README.md` for the full schema and
+security boundary.
 
 ## 3. recall corpus bootstrap
 `install.sh` links the canonical recall code and support files into `~/.recall`; the venv,

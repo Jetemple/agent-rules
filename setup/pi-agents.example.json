@@ -1,0 +1,19 @@
+{
+  "models": {
+    "fast": {
+      "provider": "example-provider",
+      "id": "example-fast-model"
+    },
+    "careful": {
+      "provider": "example-provider",
+      "id": "example-careful-model",
+      "perspective": "Challenge assumptions and inspect long-term failure modes."
+    }
+  },
+  "defaults": {
+    "scout": "fast",
+    "reviewer": "careful",
+    "skeptic": "careful",
+    "council": ["fast", "careful"]
+  }
+}
