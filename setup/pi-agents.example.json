@@ -1,24 +1,19 @@
 {
   "models": {
-    "luna": {
-      "provider": "openai-codex",
-      "id": "gpt-5.6-luna"
+    "fast": {
+      "provider": "example-provider",
+      "id": "example-fast-model"
     },
-    "terra": {
-      "provider": "openai-codex",
-      "id": "gpt-5.6-terra"
-    },
-    "sol": {
-      "provider": "openai-codex",
-      "id": "gpt-5.6-sol"
-    },
-    "opus": {
-      "provider": "anthropic",
-      "id": "claude-opus-5"
-    },
-    "sonnet": {
-      "provider": "anthropic",
-      "id": "claude-sonnet-5"
+    "careful": {
+      "provider": "example-provider",
+      "id": "example-careful-model",
+      "perspective": "Challenge assumptions and inspect long-term failure modes."
     }
+  },
+  "defaults": {
+    "scout": "fast",
+    "reviewer": "careful",
+    "skeptic": "careful",
+    "council": ["fast", "careful"]
   }
 }

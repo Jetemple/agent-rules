@@ -31,7 +31,7 @@ export const DEFAULT_AGENTS_CONFIG: AgentsConfig = Object.freeze({
     scout: "luna",
     reviewer: "sol",
     skeptic: "terra",
-    council: Object.freeze(["luna", "sol", "opus", "sonnet"]),
+    council: Object.freeze(["luna", "sol"]),
   }),
 });
 
@@ -222,8 +222,9 @@ function parseConfig(value: unknown, configPath: string, home: string): AgentsCo
 }
 
 export function loadAgentsConfig(options: LoadAgentsConfigOptions = {}): AgentsConfig {
-  const configPath = options.configPath ?? defaultConfigPath(options);
   const home = options.home ?? os.homedir();
+  const configuredPath = options.configPath ?? process.env.PI_AGENTS_CONFIG;
+  const configPath = expandHome(configuredPath ?? defaultConfigPath(options), home);
 
   let source: string;
   try {

@@ -51,6 +51,7 @@ describe("loadAgentsConfig", () => {
     const config = loadAgentsConfig({ configPath: path.join(root, "missing.json") });
 
     expect(config).toEqual(DEFAULT_AGENTS_CONFIG);
+    expect(config.defaults.council).toEqual(["luna", "sol"]);
     expect(config).not.toBe(DEFAULT_AGENTS_CONFIG);
     expect(Object.isFrozen(config)).toBe(true);
     expect(Object.isFrozen(config.models)).toBe(true);
@@ -118,6 +119,21 @@ describe("loadAgentsConfig", () => {
       models: validModels,
       defaults: validDefaults,
     });
+  });
+
+  test("honors PI_AGENTS_CONFIG when no explicit path is given", () => {
+    const file = writeConfig(tempRoot(), { models: validModels, defaults: validDefaults });
+    const previous = process.env.PI_AGENTS_CONFIG;
+    process.env.PI_AGENTS_CONFIG = file;
+    try {
+      expect(loadAgentsConfig({ configPath: undefined })).toEqual({
+        models: validModels,
+        defaults: validDefaults,
+      });
+    } finally {
+      if (previous === undefined) delete process.env.PI_AGENTS_CONFIG;
+      else process.env.PI_AGENTS_CONFIG = previous;
+    }
   });
 
   test.each([

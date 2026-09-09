@@ -111,9 +111,61 @@ test("canonicalizes a symlinked cwd before discovering its policy", () => {
 
 test("deduplicates a policy that governs both cwd arguments", () => {
   const root = project();
+  policy(root, { version: 1, allowedModels: [approved], council: ["fast", "careful"] });
+
+  const policies = loadApplicablePolicies(root, root);
+  expect(policies).toHaveLength(1);
+  expect(policies[0]?.council).toEqual(["fast", "careful"]);
+});
+
+test("parses an optional scoped council roster", () => {
+  const root = project();
+  policy(root, {
+    version: 1,
+    allowedModels: [approved],
+    council: ["fast", "careful"],
+  });
+
+  expect(loadApplicablePolicies(root, root)[0]?.council).toEqual(["fast", "careful"]);
+});
+
+test("retains ordered rosters from distinct applicable policies", () => {
+  const parent = project();
+  const child = project();
+  policy(parent, {
+    version: 1,
+    allowedModels: [],
+    council: ["fast", "careful"],
+  });
+  policy(child, {
+    version: 1,
+    allowedModels: [],
+    council: ["careful", "fast"],
+  });
+
+  expect(loadApplicablePolicies(parent, child).map((item) => item.council)).toEqual([
+    ["fast", "careful"],
+    ["careful", "fast"],
+  ]);
+});
+
+test("leaves an omitted scoped council roster absent", () => {
+  const root = project();
   policy(root, { version: 1, allowedModels: [approved] });
 
-  expect(loadApplicablePolicies(root, root)).toHaveLength(1);
+  expect(loadApplicablePolicies(root, root)[0]?.council).toBeUndefined();
+});
+
+test.each([
+  [{ version: 1, allowedModels: [approved], council: ["fast"] }, "2 to 5"],
+  [{ version: 1, allowedModels: [approved], council: ["fast", "fast"] }, "unique"],
+  [{ version: 1, allowedModels: [approved], council: ["Bad Name", "careful"] }, "valid model name"],
+  [{ version: 1, allowedModels: [approved], council: ["a", "b", "c", "d", "e", "f"] }, "2 to 5"],
+  [{ version: 1, allowedModels: [approved], council: "fast" }, "council must be an array"],
+] as const)("rejects invalid scoped council %#", (value, message) => {
+  const root = project();
+  policy(root, value);
+  expect(() => loadApplicablePolicies(root, root)).toThrow(message);
 });
 
 test("an empty allowlist denies every route", () => {

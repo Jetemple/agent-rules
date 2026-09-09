@@ -125,6 +125,11 @@ grep -qF '# >>> agent-rules hub' "$HOME/.codex/AGENTS.md" || fail "codex block n
 grep -q "^@$REPO/core.md" "$HOME/.claude/AGENTS.md" || fail "claude AGENTS.md missing hub import"
 [ "$(readlink "$HOME/.pi/agent/extensions/agents")" = "$REPO/extensions/pi/agents" ] \
   || fail "Pi agents extension not linked"
+[ -f "$REPO/setup/pi-agents.example.json" ] \
+  || fail "Pi agents model-config example missing"
+[ -f "$REPO/setup/pi-agents-policy.example.json" ] \
+  || fail "Pi agents project-policy example missing"
+pass "Pi agents configuration examples present"
 [ -x "$HOME/.claude/statusline.sh" ] || fail "statusline.sh not seeded/executable"
 [ -L "$HOME/.recall/recall.py" ] || fail ".recall/recall.py not linked"
 [ "$(readlink "$HOME/.recall/recall.py")" = "$REPO/tools/recall/recall.py" ] \

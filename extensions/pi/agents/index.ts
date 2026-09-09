@@ -10,18 +10,19 @@ import { Markdown, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import {
   loadAgentsConfig,
-  type ModelDefinition,
+  type AgentsConfig,
 } from "./config.js";
+import {
+  councilPerspective,
+  displayModel,
+  preflightCouncil,
+  preflightDelegate,
+  resolveCouncilMembers,
+  type ResolvedModel,
+} from "./runtime.js";
 
-const AGENTS_CONFIG = loadAgentsConfig();
-type ModelName = string;
-
-const MODEL_ALIASES = Object.keys(AGENTS_CONFIG.models) as [string, ...string[]];
 const ROLES = ["scout", "reviewer", "skeptic"] as const;
-
-type ModelAlias = ModelName;
-const MODEL_CONFIGS: Readonly<Record<string, Readonly<ModelDefinition>>> = AGENTS_CONFIG.models;
-const DEFAULT_COUNCIL = AGENTS_CONFIG.defaults.council;
+type ModelName = string;
 
 const THINKING_LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
 const MAX_COUNCIL_MEMBERS = 5;
@@ -37,8 +38,7 @@ const CHILD_GUARD_PATH = path.join(EXTENSION_DIR, "child-guard.ts");
 type Role = (typeof ROLES)[number];
 type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
-function defaultThinking(model: ModelAlias, role: Role): ThinkingLevel {
-  if (model === "luna" || model === "terra") return "max";
+function defaultThinking(role: Role): ThinkingLevel {
   return role === "scout" ? "medium" : "high";
 }
 
@@ -58,7 +58,8 @@ type Usage = {
 };
 
 type RunResult = {
-  model: ModelAlias;
+  model: ModelName;
+  route: Readonly<{ provider: string; id: string }>;
   role: Role;
   task: string;
   cwd: string;
@@ -158,7 +159,7 @@ function resolveCwd(requested: string | undefined, fallback: string): string {
   return resolved;
 }
 
-function rolePrompt(role: Role, model: ModelAlias): string {
+function rolePrompt(role: Role, model: ModelName): string {
   const shared = [
     "You are a bounded, read-only child agent with an isolated context.",
     "Never modify files, run shell commands, inspect credentials, access paths outside the working directory, or contact remote services.",
@@ -179,32 +180,23 @@ function rolePrompt(role: Role, model: ModelAlias): string {
   return `${shared}\n\n${specific[role]}\nYou are the ${model.toUpperCase()} council member.`;
 }
 
-function councilPerspective(model: ModelAlias): string {
-  switch (model) {
-    case "luna":
-      return "Prioritize fast falsification: identify obvious defects, unsupported claims, and the cheapest adequate solution.";
-    case "terra":
-      return "Prioritize pragmatic engineering tradeoffs, maintainability, and a viable alternative to the leading proposal.";
-    case "sol":
-      return "Perform a deep review: trace subtle failure modes, security concerns, and long-term design consequences.";
-    case "opus":
-      return "Challenge load-bearing assumptions, identify subtle systemic risks, and develop the strongest competing recommendation.";
-    case "sonnet":
-      return "Prioritize balanced implementation feasibility, code quality, and a clear recommendation grounded in the available evidence.";
-  }
-}
-
-async function runChild(options: {
-  model: ModelAlias;
+type RunChildOptions = Readonly<{
+  resolved: ResolvedModel;
   role: Role;
   thinking: ThinkingLevel;
   task: string;
   cwd: string;
   signal?: AbortSignal;
-}): Promise<RunResult> {
+}>;
+
+async function runChild(options: RunChildOptions): Promise<RunResult> {
   if (options.signal?.aborted) {
     return {
-      model: options.model,
+      model: options.resolved.name,
+      route: {
+        provider: options.resolved.definition.provider,
+        id: options.resolved.definition.id,
+      },
       role: options.role,
       task: options.task,
       cwd: options.cwd,
@@ -225,7 +217,7 @@ async function runChild(options: {
   let protocolError = false;
   let terminalMessageSeen = false;
 
-  const model = MODEL_CONFIGS[options.model];
+  const model = options.resolved.definition;
   const args = [
     "--mode",
     "json",
@@ -249,7 +241,7 @@ async function runChild(options: {
     "--tools",
     "safe_read,safe_grep,safe_find",
     "--append-system-prompt",
-    rolePrompt(options.role, options.model),
+    rolePrompt(options.role, options.resolved.name),
     `Task:\n${options.task}`,
   ];
 
@@ -440,7 +432,11 @@ async function runChild(options: {
     : undefined;
 
   return {
-    model: options.model,
+    model: options.resolved.name,
+    route: {
+      provider: options.resolved.definition.provider,
+      id: options.resolved.definition.id,
+    },
     role: options.role,
     task: options.task,
     cwd: options.cwd,
@@ -486,37 +482,64 @@ const CwdField = Type.Optional(
   Type.String({ maxLength: 4_096, description: "Child working directory; defaults to the current directory" }),
 );
 
-const DelegateParams = Type.Object({
-  task: Type.String({ maxLength: 20_000, description: "One bounded task for the child agent" }),
-  role: Type.Optional(StringEnum(ROLES, { description: "Default: reviewer" })),
-  model: Type.Optional(StringEnum(MODEL_ALIASES, { description: "Default: luna for scout, sol otherwise" })),
-  thinking: Type.Optional(StringEnum(THINKING_LEVELS, { description: "Default: max for luna/terra; medium for other scouts, high otherwise" })),
-  cwd: CwdField,
-});
+function configuredModelNames(config: AgentsConfig): [string, ...string[]] {
+  const names = Object.keys(config.models).sort();
+  if (names.length === 0) throw new Error("Pi agents requires at least one configured model");
+  return names as [string, ...string[]];
+}
 
-const CouncilParams = Type.Object({
-  question: Type.String({
-    maxLength: 20_000,
-    description: "The same decision or review question sent independently to every member",
-  }),
-  members: Type.Optional(
-    Type.Array(StringEnum(MODEL_ALIASES), {
-      description: "Council members; default: luna, sol, opus, and sonnet",
-      minItems: 2,
-      maxItems: MAX_COUNCIL_MEMBERS,
-      uniqueItems: true,
+function createDelegateParams(config: AgentsConfig) {
+  return Type.Object({
+    task: Type.String({ maxLength: 20_000, description: "One bounded task for the child agent" }),
+    role: Type.Optional(StringEnum(ROLES, { description: "Default: reviewer" })),
+    model: Type.Optional(
+      StringEnum(configuredModelNames(config), {
+        description: `Default: ${config.defaults.scout} for scouts, ${config.defaults.reviewer} otherwise`,
+      }),
+    ),
+    thinking: Type.Optional(StringEnum(THINKING_LEVELS, { description: "Default: medium for scouts; high otherwise" })),
+    cwd: CwdField,
+  });
+}
+
+function createCouncilParams(config: AgentsConfig) {
+  return Type.Object({
+    question: Type.String({
+      maxLength: 20_000,
+      description: "The same decision or review question sent independently to every member",
     }),
-  ),
-  thinking: Type.Optional(StringEnum(THINKING_LEVELS, { description: "Default: max for luna/terra; high for other council members" })),
-  cwd: CwdField,
-});
+    members: Type.Optional(
+      Type.Array(StringEnum(configuredModelNames(config)), {
+        description: "Council members; default: configured scoped default",
+        minItems: 2,
+        maxItems: MAX_COUNCIL_MEMBERS,
+        uniqueItems: true,
+      }),
+    ),
+    thinking: Type.Optional(StringEnum(THINKING_LEVELS, { description: "Default: high for council reviewers" })),
+    cwd: CwdField,
+  });
+}
 
-export default function (pi: ExtensionAPI) {
+export type SpawnChild = (options: RunChildOptions) => Promise<RunResult>;
+
+export function createAgentsExtension(
+  deps: Readonly<{
+    config?: AgentsConfig;
+    spawnChild?: SpawnChild;
+  }> = {},
+): (pi: ExtensionAPI) => void {
+  const config = deps.config ?? loadAgentsConfig();
+  const spawnChild = deps.spawnChild ?? runChild;
+  const DelegateParams = createDelegateParams(config);
+  const CouncilParams = createCouncilParams(config);
+
+  return function registerAgentsExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "delegate",
     label: "Delegate",
     description: "Run one bounded, read-only subagent in an isolated Pi process. Use for scouting or an independent review.",
-    promptSnippet: "Delegate one bounded read-only scouting or review task to an isolated GPT child agent",
+    promptSnippet: "Delegate one bounded read-only scouting or review task to an isolated child agent",
     promptGuidelines: [
       "Use delegate for a single independent scouting or review task when isolation materially saves main-context budget.",
       "Keep delegate tasks narrow, state the exact scope and output contract, and never delegate final edits or user decisions.",
@@ -524,14 +547,19 @@ export default function (pi: ExtensionAPI) {
     parameters: DelegateParams,
     async execute(_id, params, signal, onUpdate, ctx) {
       const role: Role = params.role ?? "reviewer";
-      const model: ModelAlias = params.model ?? (role === "scout" ? "luna" : "sol");
-      const thinking: ThinkingLevel = params.thinking ?? defaultThinking(model, role);
+      const modelName: ModelName =
+        params.model ?? (role === "scout" ? config.defaults.scout : config.defaults.reviewer);
       const cwd = resolveCwd(params.cwd, ctx.cwd);
+      const resolved = preflightDelegate(config, modelName, ctx.cwd, cwd);
+      const thinking: ThinkingLevel = params.thinking ?? defaultThinking(role);
 
-      onUpdate?.({ content: [{ type: "text", text: `Running ${model} ${role}…` }], details: { kind: "delegate", results: [] } });
-      const result = await runChild({ model, role, thinking, task: params.task, cwd, signal });
+      onUpdate?.({
+        content: [{ type: "text", text: `Running ${displayModel(resolved.name, resolved.definition)} ${role}…` }],
+        details: { kind: "delegate", results: [] },
+      });
+      const result = await spawnChild({ resolved, role, thinking, task: params.task, cwd, signal });
       const content = truncateUtf8(
-        `## ${model.toUpperCase()} ${role}\n\n${resultText(result)}\n\n_${formatUsage(result.usage)}_`,
+        `## ${displayModel(result.model, result.route)} ${role}\n\n${resultText(result)}\n\n_${formatUsage(result.usage)}_`,
         OUTPUT_CAP_BYTES,
       );
       return {
@@ -542,10 +570,13 @@ export default function (pi: ExtensionAPI) {
     },
     renderCall(args, theme) {
       const role = args.role ?? "reviewer";
-      const model = args.model ?? (role === "scout" ? "luna" : "sol");
+      const modelName =
+        args.model ?? (role === "scout" ? config.defaults.scout : config.defaults.reviewer);
+      const model = config.models[modelName];
+      const modelLabel = model ? displayModel(modelName, model) : modelName;
       const preview = args.task.length > 80 ? `${args.task.slice(0, 80)}…` : args.task;
       return new Text(
-        `${theme.fg("toolTitle", theme.bold("delegate "))}${theme.fg("accent", `${model}/${role}`)}\n${theme.fg("dim", preview)}`,
+        `${theme.fg("toolTitle", theme.bold("delegate "))}${theme.fg("accent", `${modelLabel}/${role}`)}\n${theme.fg("dim", preview)}`,
         0,
         0,
       );
@@ -558,47 +589,48 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "council",
     label: "Council",
-    description: "Ask two to five independent reviewers the same question in parallel, preserving disagreements for the main agent to synthesize.",
-    promptSnippet: "Convene a bounded read-only GPT council for decisions that benefit from independent perspectives",
+    description: "Ask two to five independent reviewers the same question in parallel using the configured scoped default when members are omitted, preserving disagreements for the main agent to synthesize.",
+    promptSnippet: "Convene a bounded read-only council for decisions that benefit from independent perspectives",
     promptGuidelines: [
-      "Use council only when independent perspectives materially reduce uncertainty; the default roster is luna, sol, opus, and sonnet.",
+      "Use council only when independent perspectives materially reduce uncertainty; the default roster is resolved at execution time for the applicable project.",
       "After council returns, compare evidence and disagreements instead of treating majority opinion as truth.",
     ],
     parameters: CouncilParams,
     async execute(_id, params, signal, onUpdate, ctx) {
-      const members = [...new Set<ModelAlias>((params.members ?? [...DEFAULT_COUNCIL]) as ModelAlias[])];
-      if (members.length < 2 || members.length > MAX_COUNCIL_MEMBERS) {
-        throw new Error(`Council requires 2-${MAX_COUNCIL_MEMBERS} unique members.`);
-      }
-
-      const thinking: ThinkingLevel = params.thinking ?? "high";
       const cwd = resolveCwd(params.cwd, ctx.cwd);
+      const memberNames = resolveCouncilMembers(config, params.members, ctx.cwd, cwd);
+      const resolvedMembers = preflightCouncil(config, memberNames, ctx.cwd, cwd);
       const completed: RunResult[] = [];
       onUpdate?.({
-        content: [{ type: "text", text: `Council running: ${members.join(", ")}…` }],
+        content: [{
+          type: "text",
+          text: `Council running: ${resolvedMembers
+            .map((member) => displayModel(member.name, member.definition))
+            .join(", ")}…`,
+        }],
         details: { kind: "council", results: [] },
       });
 
-      const results = await mapWithLimit(members, MAX_CONCURRENCY, async (model) => {
+      const results = await mapWithLimit([...resolvedMembers], MAX_CONCURRENCY, async (resolved) => {
+        const role: Role = "reviewer";
         const task = [
           params.question,
           "",
-          councilPerspective(model),
+          councilPerspective(resolved),
           "Review independently. Do not infer or imitate what other council members might say.",
         ].join("\n");
-        const role: Role = model === "terra" ? "skeptic" : "reviewer";
-        const childThinking = params.thinking ?? defaultThinking(model, role);
-        const result = await runChild({ model, role, thinking: childThinking, task, cwd, signal });
+        const childThinking = params.thinking ?? defaultThinking(role);
+        const result = await spawnChild({ resolved, role, thinking: childThinking, task, cwd, signal });
         completed.push(result);
         onUpdate?.({
-          content: [{ type: "text", text: `Council: ${completed.length}/${members.length} complete…` }],
+          content: [{ type: "text", text: `Council: ${completed.length}/${resolvedMembers.length} complete…` }],
           details: { kind: "council", results: [...completed] },
         });
         return result;
       });
 
       const sections = results.map(
-        (result) => `## ${result.model.toUpperCase()}\n\n${resultText(result)}\n\n_${formatUsage(result.usage)}_`,
+        (result) => `## ${displayModel(result.model, result.route)}\n\n${resultText(result)}\n\n_${formatUsage(result.usage)}_`,
       );
       const content = truncateUtf8(
         [
@@ -617,10 +649,18 @@ export default function (pi: ExtensionAPI) {
       };
     },
     renderCall(args, theme) {
-      const members = args.members ?? DEFAULT_COUNCIL;
+      const members = args.members as readonly string[] | undefined;
+      const memberPreview = members === undefined
+        ? "configured scoped default"
+        : members
+            .map((name) => {
+              const model = config.models[name];
+              return model ? displayModel(name, model) : name;
+            })
+            .join(" + ");
       const preview = args.question.length > 80 ? `${args.question.slice(0, 80)}…` : args.question;
       return new Text(
-        `${theme.fg("toolTitle", theme.bold("council "))}${theme.fg("accent", members.join(" + "))}\n${theme.fg("dim", preview)}`,
+        `${theme.fg("toolTitle", theme.bold("council "))}${theme.fg("accent", memberPreview)}\n${theme.fg("dim", preview)}`,
         0,
         0,
       );
@@ -651,4 +691,9 @@ export default function (pi: ExtensionAPI) {
       pi.sendUserMessage(`Use the council tool on this question, then synthesize its disagreements and evidence:\n\n${args}`);
     },
   });
+  };
+}
+
+export default function agentsExtension(pi: ExtensionAPI): void {
+  createAgentsExtension()(pi);
 }
