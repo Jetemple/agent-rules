@@ -1,0 +1,8 @@
+# Generic placeholders. Put real cases in ~/.recall/golden/cases.jsonl (never tracked).
+# One JSON object per line. status: golden (gated) | candidate (scored, not gated) | review | retired.
+{"id": "deploy-1", "query": "how do I deploy the staging environment", "type": "known_item", "origin": "authored", "status": "golden", "tags": ["must"], "expect": [{"path": "deploy_runbook"}]}
+{"id": "deploy-2", "query": "steps to push a build somewhere safe before it reaches customers", "type": "paraphrase", "origin": "authored", "status": "golden", "expect": [{"path": "deploy_runbook", "passage": "kubectl rollout"}]}
+{"id": "billing-1", "query": "what database does the billing service use", "type": "known_item", "origin": "history", "status": "golden", "expect": [{"path": "billing_architecture", "grade": 2}, {"path": "service_catalog", "grade": 1}]}
+{"id": "secrets-1", "query": "which API key rotation policy applies to prod", "type": "stale_current", "origin": "authored", "status": "golden", "expect": [{"path": "secrets_policy.md"}], "avoid": [{"path": "secrets_policy_2023", "why": "superseded"}]}
+{"id": "queue-1", "query": "ERR_QUEUE_BACKPRESSURE", "type": "keyword", "origin": "history", "status": "candidate", "expect": [{"path": "queue_migration_decision"}]}
+{"id": "none-1", "query": "what is the boiling point of tungsten", "type": "no_answer", "origin": "authored", "status": "golden", "expect": []}
