@@ -24,6 +24,15 @@ machines. Tool-specific or personal detail lives in each tool's own file, not he
   query the shipped semantic index (`tools/recall`) before grepping blindly. For large scouting
   or cross-file mapping, delegate to a bounded subagent with an explicit objective, scope, output
   contract, and stop condition.
+- **No nested coding-agent CLIs.** Never invoke an external coding-agent CLI (`opencode`,
+  `codex exec`, `claude`, or equivalent), whether directly, through a wrapper, or as a fallback,
+  unless the human explicitly approves that exact invocation. General authorization to implement,
+  continue, or use subagents is not approval. Built-in bounded delegation tools remain allowed.
+- **Browser automation is opt-in.** Never invoke Chrome DevTools, Chrome MCP, or any browser
+  automation merely because it is available. Prefer local files, CLI tools, existing context,
+  direct APIs, and non-automated web research. Use browser automation only when the user
+  explicitly requests browser interaction or browser-only state or functionality is necessary
+  and cannot reasonably be obtained another way. If unclear, ask first.
 - **Compaction continuity.** Preserve the current objective, explicit decisions, modified files,
   verification evidence, blockers, and next action. Drop raw logs, stale exploration, and
   abandoned branches. After compaction, trust the restored state and newest request; do not
