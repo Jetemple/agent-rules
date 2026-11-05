@@ -35,10 +35,47 @@ recall index --rebuild        # wipe + full reindex (after changing embed model)
 recall stats                  # file/chunk counts + db size
 ```
 
-Requires: `llama serve` running with `ggml-org/embeddinggemma-300M-GGUF:Q8_0` downloaded
-(preset must set `embeddings = true`, `ub = 2048` for that model), and `python3 -m pip install libsql`.
 The `recall` shorthand is a shell alias — non-interactive callers (agents) must use the full
 `python3 .../recall.py` path.
+
+## Setup
+
+1. **llama.cpp:** `brew install llama.cpp`, then
+   `llama download -hf ggml-org/embeddinggemma-300M-GGUF:Q8_0` and start the router with
+   `llama serve --models-preset ~/.config/llama.cpp/presets.ini`, using this preset:
+
+   ```ini
+   version = 1
+
+   [ggml-org/embeddinggemma-300M-GGUF:Q8_0]
+   embeddings = true
+   load-on-startup = true
+   c = 2048
+   b = 2048
+   ub = 2048
+   ```
+
+   `ub = 2048` matters: indexing embeds chunks longer than the 512-token default batch.
+
+2. **venv and index.** `setup/install.sh` links the recall code into `~/.recall`; the venv,
+   `config.json`, and `memory.db` stay device-local there and are never committed.
+
+   ```sh
+   cd ~/.recall
+   python3.13 -m venv .venv && . .venv/bin/activate
+   pip install -r requirements.txt          # installs libsql
+   cp config.example.json config.json      # then edit the paths
+   python3 recall.py index                 # embeds the corpus into ~/.recall/memory.db
+   python3 recall.py "a test query"        # expect ranked hits, not "(no matches)"
+   ```
+
+   The example config points at `~/notes/memory` and `~/notes/vault`; edit it, or
+   `mkdir -p ~/notes/memory` to start empty. The index does **not** build on first query.
+
+**Switching embedders** (e.g. from Ollama): vectors from a different runtime or quant live in a
+subtly different space, and recall degrades silently instead of erroring. Run
+`recall.py index --rebuild` on the machine that owns the DB (in shared-memory mode, the writer;
+readers pick up the new snapshot).
 
 ## How it works
 
