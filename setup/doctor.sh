@@ -197,7 +197,7 @@ for f in recall.py recall requirements.txt README.md config.example.json \
   fi
 done
 if [ -d "$HOME/.recall/.venv" ]; then echo "ok: recall venv present"
-else echo "warn: no ~/.recall/.venv (run the recall bootstrap in docs/setup.md)"; notinstalled=1; fi
+else echo "warn: no ~/.recall/.venv (see Setup in ~/.recall/README.md)"; notinstalled=1; fi
 if [ -f "$HOME/.recall/config.json" ]; then echo "ok: ~/.recall/config.json present"
 else echo "warn: no ~/.recall/config.json (copy config.example.json there)"; notinstalled=1; fi
 if [ -f "$HOME/.recall/memory.db" ]; then echo "ok: ~/.recall/memory.db index built"

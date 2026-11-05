@@ -24,6 +24,10 @@ machines. Tool-specific or personal detail lives in each tool's own file, not he
   query the shipped semantic index (`tools/recall`) before grepping blindly. For large scouting
   or cross-file mapping, delegate to a bounded subagent with an explicit objective, scope, output
   contract, and stop condition.
+- **No `docs/` in public repos.** A public GitHub repo never tracks a `docs/` directory. Before
+  making a repo public, or committing to one that already is, check `git ls-files docs/` and stop
+  if it lists anything. Agent plans and specs (e.g. `docs/superpowers/`) live outside the repo or
+  stay gitignored; user-facing documentation goes in the README.
 - **Compaction continuity.** Preserve the current objective, explicit decisions, modified files,
   verification evidence, blockers, and next action. Drop raw logs, stale exploration, and
   abandoned branches. After compaction, trust the restored state and newest request; do not
