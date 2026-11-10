@@ -25,5 +25,9 @@ __pycache__/
 voice-profile*.md
 *.voice-profile.md
 
+# Implementation plans are local build artifacts, not shipped docs — keep them
+# out of the public repo. (Already-tracked plans predate this rule.)
+docs/superpowers/plans/
+
 # macOS
 .DS_Store
