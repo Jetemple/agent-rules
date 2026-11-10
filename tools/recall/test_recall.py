@@ -598,7 +598,10 @@ class RecallAddTests(unittest.TestCase):
     def setUp(self):
         # cmd_add prints the created path to stdout by design; keep it out of the
         # test runner output.
-        self.enterContext(contextlib.redirect_stdout(io.StringIO()))
+        # enterContext needs Python 3.11; this is the same thing spelled for 3.10.
+        quiet = contextlib.redirect_stdout(io.StringIO())
+        quiet.__enter__()
+        self.addCleanup(quiet.__exit__, None, None, None)
 
     def _module(self, td, **extra):
         root = Path(td) / "notes"

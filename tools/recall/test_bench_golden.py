@@ -8,6 +8,7 @@ server. Nothing here reads `~/.recall` or a private case file.
 import hashlib
 import json
 import os
+import site
 import subprocess
 import sys
 import tempfile
@@ -407,7 +408,9 @@ class GoldenEndToEndTests(unittest.TestCase):
 
     def cli(self, script, *args, code=0):
         env = {"HOME": str(self.home), "XDG_CONFIG_HOME": str(self.home / ".config"),
-               "PATH": os.environ.get("PATH", "")}
+               "PATH": os.environ.get("PATH", ""),
+               # HOME is a temp dir; keep `pip install --user` packages importable.
+               "PYTHONUSERBASE": site.getuserbase()}
         proc = subprocess.run([sys.executable, str(script), *args],
                               capture_output=True, text=True, env=env)
         self.assertEqual(proc.returncode, code, msg=f"{args}:\n{proc.stdout}\n{proc.stderr}")
