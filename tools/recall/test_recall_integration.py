@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import shutil
+import site
 import subprocess
 import sys
 import tempfile
@@ -113,6 +114,9 @@ class RecallIntegrationTests(unittest.TestCase):
             "HOME": str(self.home),
             "XDG_CONFIG_HOME": str(self.home / ".config"),
             "PATH": os.environ.get("PATH", ""),
+            # HOME is a temp dir, so pin the real per-user package dir: a
+            # libsql installed with `pip install --user` must stay importable.
+            "PYTHONUSERBASE": site.getuserbase(),
         }
         proc = subprocess.run(
             [sys.executable, str(ENGINE), *args],
