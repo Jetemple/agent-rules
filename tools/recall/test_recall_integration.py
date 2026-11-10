@@ -122,6 +122,33 @@ class RecallIntegrationTests(unittest.TestCase):
                              msg=f"{args} failed:\n{proc.stdout}\n{proc.stderr}")
         return proc
 
+    def test_excluded_conflict_rows_are_pruned_and_published_without_other_changes(self):
+        self.run_cli("index", "--publish")
+        conflict = self.corpus / "topic.sync-conflict-20260101-120000-DEVICE.md"
+        conflict.write_text("obsolete conflictword evidence", encoding="utf-8")
+        # Seed rows from an older engine that did not exclude conflict artifacts.
+        conn = libsql.connect(str(self.db))
+        text = "obsolete conflictword evidence"
+        cursor = conn.execute(
+            "INSERT INTO chunks(source,path,rel,line,txt,emb) VALUES (?,?,?,?,?,vector32(?))",
+            ("notes", str(conflict), conflict.name, 1, text, json.dumps(_vector(text))))
+        conn.execute("INSERT INTO fts(rowid,txt) VALUES (?,?)", (cursor.lastrowid, text))
+        conn.execute("INSERT INTO files(path,hash) VALUES (?,?)", (str(conflict), "legacy"))
+        conn.commit()
+        conn.close()
+        self.run_cli("publish")
+        self.run_cli("index", "--publish")
+        for database in (self.db, self.publish):
+            conn = libsql.connect(str(database))
+            self.assertEqual(conn.execute("SELECT count(*) FROM chunks WHERE path=?",
+                                          (str(conflict),)).fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT count(*) FROM files WHERE path=?",
+                                          (str(conflict),)).fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT count(*) FROM fts WHERE fts MATCH 'conflictword'")
+                             .fetchone()[0], 0)
+            conn.close()
+        self.assertTrue(conflict.exists())
+
     def test_end_to_end(self):
         # 1. index --publish builds the DB and the snapshot
         self.run_cli("index", "--publish")
@@ -137,8 +164,8 @@ class RecallIntegrationTests(unittest.TestCase):
         #    refreshes the snapshot
         before = set(p.name for p in (self.corpus / "_inbox").glob("*.md")) \
             if (self.corpus / "_inbox").exists() else set()
-        add = self.run_cli("add", "--title", "Synthetic title", "--publish",
-                           "synthetic durable quantumsprocket fact")
+        add = self.run_cli("add", "synthetic durable quantumsprocket fact",
+                           "--title", "Synthetic title", "--publish")
         created = Path(add.stdout.strip().splitlines()[-1])
         self.assertTrue(str(created).startswith(str(self.home)))
         self.assertEqual(created.parent, self.corpus / "_inbox")

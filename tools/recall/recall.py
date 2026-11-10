@@ -52,6 +52,9 @@ RRF_K     = 60            # reciprocal-rank-fusion constant
 #   exclude_dirs    [str] source-relative directory prefixes never indexed, e.g.
 #                         ["00_inbox/_reports"]. Prunes the whole subtree. Matching
 #                         is per path segment, so "_reports" never hits "_reportsmith".
+#   include_dirs    [str] source-relative paths of `_archive` folders to index anyway,
+#                         e.g. ["projects/acme/_archive"]. Exact paths only: other
+#                         archives stay out, and exclude_dirs still wins.
 #   embed_url       str   embeddings endpoint (OpenAI-compatible)
 #   embed_model     str   embeddings model id
 CONFIG_PATH = os.path.join(HOME, ".recall", "config.json")
@@ -87,7 +90,7 @@ def _string_list(value, default):
         raise ValueError("exclude_files must be a list of non-empty strings")
     return value
 
-def _dir_prefix_list(value):
+def _dir_prefix_list(value, key="exclude_dirs"):
     """Normalize source-relative directory prefixes into tuples of path segments.
 
     Accepts "a/b", "/a/b", "./a/b//", and OS-native separators alike. Segment
@@ -96,7 +99,7 @@ def _dir_prefix_list(value):
     if value is None:
         return set()
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-        raise ValueError("exclude_dirs must be a list of relative directory paths")
+        raise ValueError(f"{key} must be a list of relative directory paths")
     prefixes = set()
     for item in value:
         segments = tuple(
@@ -104,11 +107,26 @@ def _dir_prefix_list(value):
             if part not in ("", ".")
         )
         if not segments:
-            raise ValueError(f"exclude_dirs entry is not a usable path: {item!r}")
+            raise ValueError(f"{key} entry is not a usable path: {item!r}")
         if ".." in segments:
-            raise ValueError(f"exclude_dirs entry must stay inside the source: {item!r}")
+            raise ValueError(f"{key} entry must stay inside the source: {item!r}")
         prefixes.add(segments)
     return prefixes
+
+
+def _include_dir_list(value):
+    """Parse `include_dirs`: exact paths the hard-coded name rule would prune but
+    that should be indexed. Only REINCLUDABLE_DIRS names qualify, and an entry below
+    another always-excluded folder could never take effect, so both are errors."""
+    paths = _dir_prefix_list(value, "include_dirs")
+    for segments in paths:
+        shown = "/".join(segments)
+        if segments[-1] not in REINCLUDABLE_DIRS:
+            raise ValueError(
+                f"include_dirs entry must end in {', '.join(sorted(REINCLUDABLE_DIRS))}: {shown!r}")
+        if any(part in EXCLUDE_DIRS for part in segments[:-1]):
+            raise ValueError(f"include_dirs entry sits under an always-excluded folder: {shown!r}")
+    return paths
 
 
 def _parse_sources(obj):
@@ -159,9 +177,16 @@ def load_config():
         "retrieval_mode": retrieval_mode,
         "exclude_files": set(_string_list(raw.get("exclude_files"), ["MEMORY.md"])),
         "exclude_dirs": _dir_prefix_list(raw.get("exclude_dirs")),
+        "include_dirs": _include_dir_list(raw.get("include_dirs")),
         "embed_url": _env("RECALL_EMBED_URL") or raw.get("embed_url") or "http://localhost:8080/v1/embeddings",
         "embed_model": _env("RECALL_EMBED_MODEL") or raw.get("embed_model") or "ggml-org/embeddinggemma-300M-GGUF:Q8_0",
     }
+
+# Hard constitution rules: never index these. `_recall` holds the published DB
+# snapshot (inside the synced folder); excluding it keeps the walk from touching it.
+EXCLUDE_DIRS = {"_scratch", "_archive", ".git", "node_modules", ".obsidian", "_recall"}
+# The only hard-excluded name `include_dirs` may re-admit, and only at listed paths.
+REINCLUDABLE_DIRS = {"_archive"}
 
 try:
     CFG = load_config()
@@ -178,11 +203,9 @@ READ_ONLY     = CFG["read_only"]
 RETRIEVAL_MODE = CFG["retrieval_mode"]
 EXCLUDE_FILES = CFG["exclude_files"]
 EXCLUDE_DIR_PREFIXES = CFG["exclude_dirs"]
+INCLUDE_DIR_PATHS = CFG["include_dirs"]
 EMBED_URL     = CFG["embed_url"]
 MODEL         = CFG["embed_model"]
-# Hard constitution rules: never index these. `_recall` holds the published DB
-# snapshot (inside the synced folder); excluding it keeps the walk from touching it.
-EXCLUDE_DIRS = {"_scratch", "_archive", ".git", "node_modules", ".obsidian", "_recall"}
 
 # ---- embedding --------------------------------------------------------------
 def embed(text, is_query, _tries=5):
@@ -288,10 +311,12 @@ def iter_files():
         for directory, dirs, files in os.walk(root):
             here = _relative_segments(directory, root)
             dirs[:] = [name for name in dirs
-                       if name not in EXCLUDE_DIRS
+                       if (name not in EXCLUDE_DIRS or here + (name,) in INCLUDE_DIR_PATHS)
+                       and ".sync-conflict-" not in name
                        and not _is_excluded_dir(here + (name,))]
             for name in sorted(files):
-                if name.endswith(".md") and name not in EXCLUDE_FILES:
+                if (name.endswith(".md") and name not in EXCLUDE_FILES
+                        and ".sync-conflict-" not in name):
                     yield source, root, os.path.join(directory, name)
 
 # ---- commands ---------------------------------------------------------------
@@ -372,6 +397,8 @@ def _index_all_files(con, cur, commit_each):
     cur.execute("SELECT path FROM files")
     for (p,) in cur.fetchall():
         if p not in seen:
+            # Exclusion/deletion-only runs must also trigger snapshot publication.
+            changed += 1
             cur.execute("SELECT id FROM chunks WHERE path=?", (p,))
             for (cid,) in cur.fetchall():
                 cur.execute("DELETE FROM fts WHERE rowid=?", (cid,))

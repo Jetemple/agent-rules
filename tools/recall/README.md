@@ -66,8 +66,11 @@ db, so they tolerate a snapshot published by an older or newer engine.
 
 ```text
 Individual Markdown notes are source records. memory.db is derived. MEMORY.md is
-excluded by default because catalogs commonly duplicate source notes. A project that
-has not migrated unique catalog-only content may temporarily set "exclude_files": []
+excluded by default because catalogs commonly duplicate source notes. Syncthing
+conflict artifacts (`*.sync-conflict-*`, including directories) are always excluded
+without deleting their source files. The next writer index pass prunes any legacy
+conflict rows; `index --publish` also refreshes the snapshot on exclusion-only changes.
+A project that has not migrated unique catalog-only content may temporarily set "exclude_files": []
 in its private config; migrate that content before restoring the default.
 ```
 
@@ -91,7 +94,24 @@ This is deliberately binary: an excluded subtree becomes unreachable from recall
 exclude only what you would not want cited as an answer. Historical material you still
 want to reach occasionally is a better fit for a future scoped search than for
 exclusion. A small hard-coded set (`_scratch`, `_archive`, `.git`, `node_modules`,
-`.obsidian`, `_recall`) is always excluded regardless of config.
+`.obsidian`, `_recall`) is always excluded, with the one opt-out below.
+
+### Re-admitting an archive (`include_dirs`)
+
+The hard-coded `_archive` rule matches by folder name at any depth, so an archive that
+holds reference notes you still want cited (old debriefs, closed project records) is
+invisible as well. `include_dirs` indexes specific archive folders anyway:
+
+```jsonc
+"include_dirs": ["projects/acme/_archive"]
+```
+
+Entries are exact source-relative paths, normalized like `exclude_dirs`, and each must
+end in `_archive`. Only the listed folder is re-admitted: other `_archive` folders stay
+out, hard-coded names nested inside it (a `_scratch`, a deeper `_archive`) are still
+pruned, and an `exclude_dirs` match still wins. An entry that names any other folder, or
+sits below an always-excluded one, fails config validation instead of silently doing
+nothing.
 
 ### Runtime layout
 

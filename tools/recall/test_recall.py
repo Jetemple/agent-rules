@@ -129,6 +129,18 @@ class RecallCorpusTests(unittest.TestCase):
             paths = [Path(path).name for _, _, path in module.iter_files()]
             self.assertEqual(paths, ["fact.md"])
 
+    def test_syncthing_conflict_directories_are_pruned(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            root = home / "notes"
+            conflict = root / "nested" / "topic.sync-conflict-20260101-120000-DEVICE"
+            conflict.mkdir(parents=True)
+            (conflict / "fact.md").write_text("conflicting fact", encoding="utf-8")
+            (root / "fact.md").write_text("current fact", encoding="utf-8")
+            module = load_engine(home, {"sources": [{"label": "notes", "path": str(root)}]})
+            self.assertEqual([Path(path).relative_to(root).as_posix()
+                              for _, _, path in module.iter_files()], ["fact.md"])
+
     def test_explicit_empty_exclude_files_preserves_catalog_temporarily(self):
         with tempfile.TemporaryDirectory() as td:
             home = Path(td)
@@ -140,6 +152,27 @@ class RecallCorpusTests(unittest.TestCase):
                 "exclude_files": [],
             })
             self.assertEqual([Path(path).name for _, _, path in module.iter_files()], ["MEMORY.md"])
+
+
+    def test_syncthing_conflict_files_are_excluded_at_every_depth(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            root = home / "notes"
+            (root / "nested").mkdir(parents=True)
+            (root / "topic.sync-conflict-20260101-120000-DEVICE").mkdir()
+            for rel in ("fact.md", "sync-conflict-guide.md", "nested/fact.md",
+                        "fact.sync-conflict-20260101-120000-DEVICE.md",
+                        "nested/fact.sync-conflict-20260102-120000-OTHER.md",
+                        "topic.sync-conflict-20260101-120000-DEVICE/inside.md"):
+                (root / rel).write_text("synthetic fact", encoding="utf-8")
+            module = load_engine(home, {
+                "sources": [{"label": "notes", "path": str(root)}],
+                "exclude_files": [],
+            })
+            paths = {Path(path).relative_to(root).as_posix()
+                     for _, _, path in module.iter_files()}
+            self.assertEqual(paths, {"fact.md", "sync-conflict-guide.md", "nested/fact.md"})
+            self.assertTrue((root / "fact.sync-conflict-20260101-120000-DEVICE.md").exists())
 
 
 class RecallRoleTests(unittest.TestCase):
@@ -889,3 +922,70 @@ class RecallExcludeDirsTests(unittest.TestCase):
                     "sources": [{"label": "notes", "path": "~/notes"}],
                     "exclude_dirs": "00_inbox/_reports",
                 })
+
+
+class RecallIncludeDirsTests(unittest.TestCase):
+    """`include_dirs` re-admits specific `_archive` folders that the hard-coded
+    name rule would prune. Entries are exact source-relative paths."""
+
+    @staticmethod
+    def _corpus(root: Path):
+        for rel in (
+            "keep.md",
+            "projects/acme/_archive/debrief.md",
+            "projects/acme/_archive/2025/q4.md",
+            "projects/acme/_archive/_scratch/junk.md",
+            "projects/acme/_archive/old/_archive/deeper.md",
+            "projects/other/_archive/closed.md",
+        ):
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text("body", encoding="utf-8")
+
+    def _indexed(self, td, **config):
+        home = Path(td)
+        root = home / "notes"
+        root.mkdir()
+        self._corpus(root)
+        module = load_engine(home, {"sources": [{"label": "notes", "path": str(root)}], **config})
+        return sorted(
+            os.path.relpath(path, root).replace(os.sep, "/")
+            for _, _, path in module.iter_files()
+        )
+
+    def test_default_keeps_every_archive_out(self):
+        with tempfile.TemporaryDirectory() as td:
+            self.assertEqual(self._indexed(td), ["keep.md"])
+
+    def test_listed_archive_is_indexed_and_nothing_else(self):
+        """Its plain subfolders come along; other archives, and hard-coded names
+        nested inside it, stay out."""
+        with tempfile.TemporaryDirectory() as td:
+            self.assertEqual(
+                self._indexed(td, include_dirs=["projects/acme/_archive/"]),
+                ["keep.md",
+                 "projects/acme/_archive/2025/q4.md",
+                 "projects/acme/_archive/debrief.md"],
+            )
+
+    def test_exclude_dirs_wins_over_include_dirs(self):
+        for exclude in (["projects/acme"], ["projects/acme/_archive"]):
+            with self.subTest(exclude=exclude), tempfile.TemporaryDirectory() as td:
+                self.assertEqual(
+                    self._indexed(td, include_dirs=["projects/acme/_archive"],
+                                  exclude_dirs=exclude),
+                    ["keep.md"],
+                )
+
+    def test_invalid_include_dirs_are_rejected_by_name(self):
+        for bad in ("projects/acme/_archive",          # not a list
+                    ["projects/acme"],                 # not an archive
+                    ["_scratch"],                      # constitution rule, never re-admitted
+                    ["notes/_scratch/_archive"],       # unreachable below a pruned folder
+                    ["../elsewhere/_archive"],
+                    ["/"]):
+            with self.subTest(bad=bad), tempfile.TemporaryDirectory() as td:
+                with self.assertRaisesRegex(ValueError, "include_dirs"):
+                    load_engine(Path(td), {
+                        "sources": [{"label": "notes", "path": "~/notes"}],
+                        "include_dirs": bad,
+                    })
