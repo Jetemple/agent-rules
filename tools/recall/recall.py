@@ -235,24 +235,49 @@ def embed(text, is_query, _tries=5):
             time.sleep(2 * (attempt + 1))   # backoff; rides out a server hiccup
 
 # ---- markdown chunking (tracks start line for citations) --------------------
+def _split_long_line(line, limit):
+    """Cut one over-long line into pieces of at most `limit` chars, preferring the
+    last whitespace in the back half of each window so words stay whole."""
+    while len(line) > limit:
+        cut = limit
+        for index in range(limit, limit // 2, -1):
+            if line[index - 1].isspace():
+                cut = index
+                break
+        yield line[:cut]
+        line = line[cut:]
+    yield line
+
+
 def chunk_md(text):
-    lines = text.split("\n")
+    """Split markdown into (start_line, body) chunks. A chunk closes at the first
+    blank line once it reaches CHUNK_MAX, and never exceeds CHUNK_MAX * 2 chars:
+    a single line longer than that (an exported table, minified JSON) is cut into
+    pieces, so one pathological line cannot overflow the embedder's context."""
+    hard_cap = CHUNK_MAX * 2
     chunks, buf, start = [], [], 1
     size = 0
-    for i, ln in enumerate(lines, 1):
-        if not buf:
-            start = i
-        buf.append(ln)
-        size += len(ln) + 1
-        # break on blank-line boundary once over target, or hard cap
-        if (size >= CHUNK_MAX and ln.strip() == "") or size >= CHUNK_MAX * 2:
-            body = "\n".join(buf).strip()
-            if body:
-                chunks.append((start, body))
-            buf, size = [], 0
-    body = "\n".join(buf).strip()
-    if body:
-        chunks.append((start, body))
+
+    def flush():
+        nonlocal buf, size
+        body = "\n".join(buf).strip()
+        if body:
+            chunks.append((start, body))
+        buf, size = [], 0
+
+    for i, ln in enumerate(text.split("\n"), 1):
+        pieces = _split_long_line(ln, hard_cap) if len(ln) > hard_cap else (ln,)
+        for piece in pieces:
+            if buf and size + len(piece) + 1 > hard_cap:
+                flush()
+            if not buf:
+                start = i
+            buf.append(piece)
+            size += len(piece) + 1
+            # break on blank-line boundary once over target, or hard cap
+            if (size >= CHUNK_MAX and piece.strip() == "") or size >= hard_cap:
+                flush()
+    flush()
     return chunks
 
 # ---- db ---------------------------------------------------------------------
