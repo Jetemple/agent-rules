@@ -177,6 +177,47 @@ class RecallCorpusTests(unittest.TestCase):
             self.assertTrue((root / "fact.sync-conflict-20260101-120000-DEVICE.md").exists())
 
 
+class RecallChunkingTests(unittest.TestCase):
+    def setUp(self):
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        self.module = load_engine(Path(self._td.name))
+        self.hard_cap = self.module.CHUNK_MAX * 2
+
+    def test_paragraphs_close_on_the_first_blank_line_past_the_target(self):
+        paragraph = "word " * 120  # 600 chars
+        text = "\n\n".join([paragraph, paragraph, paragraph])
+        chunks = self.module.chunk_md(text)
+        self.assertEqual([start for start, _ in chunks], [1, 5])
+        self.assertEqual(chunks[0][1], (paragraph + "\n\n" + paragraph).strip())
+        self.assertEqual(chunks[1][1], paragraph.strip())
+
+    def test_unbroken_long_line_is_cut_at_the_hard_cap(self):
+        line = "x" * 10_000
+        chunks = self.module.chunk_md(line)
+        self.assertGreater(len(chunks), 1)
+        self.assertTrue(all(len(body) <= self.hard_cap for _, body in chunks))
+        self.assertTrue(all(start == 1 for start, _ in chunks))
+        self.assertEqual("".join(body for _, body in chunks), line)
+
+    def test_long_line_is_cut_between_words(self):
+        words = [f"token{index:05d}" for index in range(2_000)]
+        chunks = self.module.chunk_md(" ".join(words))
+        self.assertTrue(all(len(body) <= self.hard_cap for _, body in chunks))
+        self.assertEqual([word for _, body in chunks for word in body.split()], words)
+
+    def test_lines_after_a_long_line_keep_their_line_numbers(self):
+        text = "\n".join(["intro", "y" * 6_000, "", "tail paragraph"])
+        chunks = self.module.chunk_md(text)
+        self.assertTrue(all(len(body) <= self.hard_cap for _, body in chunks))
+        self.assertEqual(chunks[-1], (4, "tail paragraph"))
+
+    def test_a_line_that_would_overflow_the_chunk_starts_a_new_one(self):
+        text = "\n".join(["a" * 1_500, "b" * 1_000])
+        chunks = self.module.chunk_md(text)
+        self.assertEqual(chunks, [(1, "a" * 1_500), (2, "b" * 1_000)])
+
+
 class RecallRoleTests(unittest.TestCase):
     def test_reader_refuses_index_and_publish(self):
         with tempfile.TemporaryDirectory() as td:
