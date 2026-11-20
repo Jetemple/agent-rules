@@ -22,10 +22,10 @@ sentinel_hits() {
 }
 
 echo "== canonical-file model (clone integrity) =="
-if [ -L "$REPO/CLAUDE.md" ] && [ "$(readlink "$REPO/CLAUDE.md")" = "AGENTS.md" ]; then
-  echo "ok: CLAUDE.md -> AGENTS.md"
+if [ -e "$REPO/CLAUDE.md" ] || [ -L "$REPO/CLAUDE.md" ]; then
+  echo "FAIL: CLAUDE.md present; AGENTS.md is the only instruction file (Claude Code reads it directly)"; fail=1
 else
-  echo "FAIL: CLAUDE.md is not a symlink to AGENTS.md"; fail=1
+  echo "ok: AGENTS.md only (no CLAUDE.md)"
 fi
 
 echo "== no private voice profile in tree =="
@@ -140,7 +140,7 @@ fi
 
 echo "== claude: personal overlay imports the hub =="
 # Claude is special-cased (see map header): ~/.claude/AGENTS.md is a PERSONAL real file that
-# @imports core.md, and ~/.claude/CLAUDE.md symlinks to it.
+# @imports core.md. Claude Code reads it directly, so there is no ~/.claude/CLAUDE.md.
 if [ -d "$HOME/.claude" ]; then
   if [ -f "$HOME/.claude/AGENTS.md" ]; then
     if grep -q "^@$REPO/core.md" "$HOME/.claude/AGENTS.md"; then
@@ -151,10 +151,10 @@ if [ -d "$HOME/.claude" ]; then
   else
     echo "warn: ~/.claude/AGENTS.md missing (run ./setup/install.sh to create the stub)"; notinstalled=1
   fi
-  if [ -L "$HOME/.claude/CLAUDE.md" ] && [ "$(readlink "$HOME/.claude/CLAUDE.md")" = "AGENTS.md" ]; then
-    echo "ok: ~/.claude/CLAUDE.md -> AGENTS.md"
+  if [ -e "$HOME/.claude/CLAUDE.md" ] || [ -L "$HOME/.claude/CLAUDE.md" ]; then
+    echo "warn: ~/.claude/CLAUDE.md exists; merge it into AGENTS.md and remove it"; notinstalled=1
   else
-    echo "warn: ~/.claude/CLAUDE.md is not a symlink to AGENTS.md"; notinstalled=1
+    echo "ok: no ~/.claude/CLAUDE.md (Claude Code reads AGENTS.md)"
   fi
 else
   echo "skip (not installed): claude (~/.claude absent)"

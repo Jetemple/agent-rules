@@ -178,14 +178,11 @@ if [ -d "$CLAUDE_DIR" ]; then
     echo "ok (personal file present, left untouched): $CLAUDE_DIR/AGENTS.md"
     echo "   -> ensure it contains a line:  @$REPO/core.md"
   fi
-  # CLAUDE.md must resolve to AGENTS.md (relative link within ~/.claude).
-  if [ -L "$CLAUDE_DIR/CLAUDE.md" ] && [ "$(readlink "$CLAUDE_DIR/CLAUDE.md")" = "AGENTS.md" ]; then
-    echo "ok (already linked): $CLAUDE_DIR/CLAUDE.md -> AGENTS.md"
-  elif [ -e "$CLAUDE_DIR/CLAUDE.md" ] && [ ! -L "$CLAUDE_DIR/CLAUDE.md" ]; then
-    echo "REFUSE: $CLAUDE_DIR/CLAUDE.md is a real file. Move it into AGENTS.md, then re-run." >&2
+  # Claude Code reads AGENTS.md directly, so no CLAUDE.md is created. Never delete one: it may hold real rules.
+  if [ -e "$CLAUDE_DIR/CLAUDE.md" ] || [ -L "$CLAUDE_DIR/CLAUDE.md" ]; then
+    echo "warn: $CLAUDE_DIR/CLAUDE.md exists; merge any real content into AGENTS.md and remove it" >&2
   else
-    echo "link: $CLAUDE_DIR/CLAUDE.md -> AGENTS.md"
-    [ "$DRY" -eq 0 ] && ln -s AGENTS.md "$CLAUDE_DIR/CLAUDE.md"
+    echo "ok (no CLAUDE.md; Claude Code reads AGENTS.md): $CLAUDE_DIR"
   fi
 else
   echo "skip (not installed): claude (~/.claude absent)"

@@ -244,9 +244,9 @@ It returns ranked path:line snippets across the whole corpus. Open full files on
 snippet is insufficient. Requires the embedding server; if it errors, fall back to grep.
 ```
 
-Which file: `AGENTS.md` is the cross-tool standard (Codex, OpenCode); `CLAUDE.md` / `GEMINI.md`
-are tool-specific. Keep `AGENTS.md` canonical and symlink the rest to it
-(`ln -s AGENTS.md CLAUDE.md`) so one edit reaches every runtime.
+Which file: `AGENTS.md` is the cross-tool standard (Codex, OpenCode, Pi, and Claude Code all read
+it). Keep `AGENTS.md` canonical; only tools that read just their own filename need a symlink
+(`ln -s AGENTS.md GEMINI.md`) so one edit reaches every runtime.
 
 **Keeping the index fresh.** The index is a derived cache; it goes stale when memory files
 change. Reindex on a trigger or a schedule:

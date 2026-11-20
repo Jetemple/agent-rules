@@ -2,7 +2,7 @@
 
 Rules for any agent working in THIS checkout. The shared, tool-agnostic rules every agent
 loads globally live in `core.md` — the hub file that `map` + `setup/install.sh` project into
-each tool. This file layers only the repo-local rules on top. (`CLAUDE.md` symlinks here.)
+each tool. This file layers only the repo-local rules on top. (Claude Code reads it directly; there is no `CLAUDE.md`.)
 
 ## This repo is public — non-negotiables
 
