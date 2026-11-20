@@ -3,7 +3,7 @@ set -euo pipefail
 
 REPO="${1:-$(cd "$(dirname "$0")/.." && pwd)}"
 SETTINGS="$REPO/setup/settings.example.json"
-DOC="$REPO/docs/compaction.md"
+DOC="$REPO/README.md"
 CORE="$REPO/core.md"
 
 fail() {

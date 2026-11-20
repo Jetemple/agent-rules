@@ -31,21 +31,14 @@ each tool. This file layers only the repo-local rules on top. (`CLAUDE.md` symli
 - `check-privacy.sh` — privacy guard. Identity patterns live OUTSIDE the repo in
   `~/.config/agent-rules/private-patterns`, so the guard never encodes who you are.
 - `setup/` — `install.sh` (wires the map + hook), `doctor.sh` (verifies), statusline, hooks.
-- `docs/` — the manual: setup, memory & recall, compaction, model & quota, drift, codex
-  custom providers.
 - `rules/` — composable rule snippets for project-level rules files.
 - `workflows/` — generic skills (`council`, `drain-memory`, `handoff`, `wrap`, `your-voice`).
 - `tools/recall/` — a semantic memory-recall CLI.
 
-## Load Docs On Demand
+## Where things are documented
 
-| Task | Load |
-|---|---|
-| First-time machine setup, prereqs, install order | `docs/setup.md` |
-| Memory + semantic recall | `docs/memory-and-recall.md` |
-| Enabling auto-compaction on Claude & Codex | `docs/compaction.md` |
-| Choosing a model / understanding plan vs pay-per-token cost | `docs/model-and-quota.md` |
-| Hub model, symlink scheme, syncing across machines | `docs/drift.md` |
+Setup, wiring modes, compaction: `README.md`. Recall: `tools/recall/README.md`. Public repos
+here never track a `docs/` directory (see `core.md`).
 
 ## Workflows (skills)
 

@@ -46,8 +46,7 @@ python3 ~/.recall/recall.py stats                      # role/config/counts, or 
 `--vector` and `--hybrid` are mutually exclusive. The `recall` shorthand is an interactive
 shell alias only — non-interactive callers (agents) must use the full `python3 .../recall.py` path.
 
-Requires: `llama serve` running with `ggml-org/embeddinggemma-300M-GGUF:Q8_0` downloaded
-(preset must set `embeddings = true`, `ub = 2048` for that model), and `python3 -m pip install libsql`.
+See [Setup](#setup) for the embedder and venv.
 
 ### Reader, writer, and standalone roles
 
@@ -130,6 +129,45 @@ the canonical engine at `tools/recall/recall.py` in the agent-rules checkout, re
 
 `~/.recall/` holds only device-local state after that: `config.json`, `.venv`, `memory.db`,
 and `bench_labels.json`. None of it is tracked or synced through Git.
+
+## Setup
+
+1. **llama.cpp:** `brew install llama.cpp`, then
+   `llama download -hf ggml-org/embeddinggemma-300M-GGUF:Q8_0` and start the router with
+   `llama serve --models-preset ~/.config/llama.cpp/presets.ini`, using this preset:
+
+   ```ini
+   version = 1
+
+   [ggml-org/embeddinggemma-300M-GGUF:Q8_0]
+   embeddings = true
+   load-on-startup = true
+   c = 2048
+   b = 2048
+   ub = 2048
+   ```
+
+   `ub = 2048` matters: indexing embeds chunks longer than the 512-token default batch.
+
+2. **venv and index.** `setup/install.sh` links the recall code into `~/.recall`; the venv,
+   `config.json`, and `memory.db` stay device-local there and are never committed.
+
+   ```sh
+   cd ~/.recall
+   python3.13 -m venv .venv && . .venv/bin/activate
+   pip install -r requirements.txt          # installs libsql
+   cp config.example.json config.json      # then edit the paths
+   python3 recall.py index                 # embeds the corpus into ~/.recall/memory.db
+   python3 recall.py "a test query"        # expect ranked hits, not "(no matches)"
+   ```
+
+   The example config points at `~/notes/memory` and `~/notes/vault`; edit it, or
+   `mkdir -p ~/notes/memory` to start empty. The index does **not** build on first query.
+
+**Switching embedders** (e.g. from Ollama): vectors from a different runtime or quant live in a
+subtly different space, and recall degrades silently instead of erroring. Run
+`recall.py index --rebuild` on the machine that owns the DB (in shared-memory mode, the writer;
+readers pick up the new snapshot).
 
 ## How it works
 

@@ -202,7 +202,7 @@ else
   echo "FAIL: canonical recall engine missing"; fail=1
 fi
 if [ -d "$HOME/.recall/.venv" ]; then echo "ok: recall venv present"
-else echo "warn: no ~/.recall/.venv (run the recall bootstrap in docs/setup.md)"; notinstalled=1; fi
+else echo "warn: no ~/.recall/.venv (see Setup in ~/.recall/README.md)"; notinstalled=1; fi
 if [ -f "$HOME/.recall/config.json" ]; then echo "ok: ~/.recall/config.json present"
 else echo "warn: no ~/.recall/config.json (copy config.example.json there)"; notinstalled=1; fi
 # Resolve the configured db_path (default ~/.recall/memory.db) without echoing
