@@ -78,6 +78,16 @@ alone is not staleness — it is a suspect signal for *stateful* memories only.
 
 ## Procedure
 
+### 0. Pick the scope from where the session runs
+Run `pwd -P` and compare it with the corpus roots in recall's config:
+
+- **Inside a corpus root** (the notes vault itself): sweep every source.
+- **Anywhere else** (a code repo): sweep only this project's own notes, the folder the wrap
+  workflow writes them to. Propose nothing outside that folder and never edit another root. If
+  no folder matches this project, say so and stop; do not widen the sweep.
+
+The user can widen or narrow the scope by saying so.
+
 ### 1. Enumerate the corpus with age + suspect signals
 Read the corpus roots from recall's config so this stays tool-agnostic (leading-dash dirnames
 break `basename` — parse paths in Python):

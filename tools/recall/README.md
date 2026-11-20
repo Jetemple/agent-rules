@@ -2,12 +2,12 @@
 
 A tool-agnostic **semantic memory-recall CLI** over a personal markdown corpus. Ask a
 question in natural language; get back ranked `path:line` snippets from across the whole
-corpus, by meaning. Fully local (offline embeddings via llama.cpp's `llama serve`), no framework, ~300 lines
-of Python, one SQLite file.
+corpus, by meaning. Fully local (offline embeddings via llama.cpp's `llama serve`), no framework, a few
+hundred lines of Python, one SQLite file.
 
 ```
 $ recall "why did we drop the legacy queue worker"
-[V+K] ~/notes/decisions/queue_migration_decision.md:1
+[V+K] memory/decisions/queue_migration_decision.md:1
     Decision: retire the legacy queue worker in favor of the managed broker ...
 ```
 
@@ -26,17 +26,109 @@ the embedding server is unreachable (automatic fallback) or in `--hybrid` mode.
 
 ## Usage
 
-```
-recall "your question"        # vector recall → path:line + snippet
-recall "..." --hybrid         # RRF hybrid (vector+keyword) — for noisier/larger corpora
-recall "..." -k 8             # more hits (default 5)
-recall index                  # incremental reindex (only changed files re-embed)
-recall index --rebuild        # wipe + full reindex (after changing embed model)
-recall stats                  # file/chunk counts + db size
+The installed entry point is `~/.recall/recall.py` (a thin launcher; see
+[Runtime layout](#runtime-layout)). Full command set:
+
+```sh
+python3 ~/.recall/recall.py "natural-language query"   # ranked path:line + snippet
+python3 ~/.recall/recall.py "..." --hybrid             # RRF hybrid (vector+keyword)
+python3 ~/.recall/recall.py "..." --vector             # force vector even if config default is hybrid
+python3 ~/.recall/recall.py "..." -k 8                 # more hits (default 5)
+python3 ~/.recall/recall.py index                      # incremental reindex (only changed files re-embed)
+python3 ~/.recall/recall.py index --rebuild            # wipe + full reindex (after changing embed model)
+python3 ~/.recall/recall.py index --publish            # reindex, then publish a snapshot (writer only)
+python3 ~/.recall/recall.py publish                    # publish a fresh snapshot from the current db (writer only)
+printf '%s\n' 'durable fact' | python3 ~/.recall/recall.py add --stdin --title 'short title'  # write a dated intake note
+python3 ~/.recall/recall.py add "durable fact" --publish               # index + publish it (writer only)
+python3 ~/.recall/recall.py stats                      # role/config/counts, or missing-reader-snapshot diagnosis
 ```
 
-The `recall` shorthand is a shell alias — non-interactive callers (agents) must use the full
-`python3 .../recall.py` path.
+`--vector` and `--hybrid` are mutually exclusive. The `recall` shorthand is an interactive
+shell alias only — non-interactive callers (agents) must use the full `python3 .../recall.py` path.
+
+See [Setup](#setup) for the embedder and venv.
+
+### Reader, writer, and standalone roles
+
+One SQLite index can be shared across machines through a file-sync folder (Syncthing,
+Dropbox, etc.). Each machine plays one role, set by config:
+
+| role | config | indexes / publishes | `recall "query"` | `add` |
+|---|---|---|---|---|
+| **standalone** | default (no `read_only`, no `publish_path`) | yes, writes its own local db | yes | writes an intake note **and** reindexes locally |
+| **writer** | `publish_path` set | yes; `index --publish` / `publish` write a WAL-free snapshot into the sync folder | yes | intake note + local reindex; publish to share it |
+| **reader** | `read_only: true` | never — `index`, `--rebuild`, `publish` are refused | yes, against the synced snapshot (opened read-only) | writes the dated intake note only; **does not touch the reader database** (the writer picks the note up on its next index and the synced snapshot carries it back) |
+
+Exactly one machine in a shared set is the writer. Readers never `ALTER TABLE` or write the
+db, so they tolerate a snapshot published by an older or newer engine.
+
+### Source of truth and catalog files
+
+```text
+Individual Markdown notes are source records. memory.db is derived. MEMORY.md is
+excluded by default because catalogs commonly duplicate source notes. Syncthing
+conflict artifacts (`*.sync-conflict-*`, including directories) are always excluded
+without deleting their source files. The next writer index pass prunes any legacy
+conflict rows; `index --publish` also refreshes the snapshot on exclusion-only changes.
+A project that has not migrated unique catalog-only content may temporarily set "exclude_files": []
+in its private config; migrate that content before restoring the default.
+```
+
+### Corpus scoping (`exclude_dirs`)
+
+Retrieval ranks every indexed chunk equally, so a corpus dominated by transient
+material (dated reports, unreviewed capture queues, staged inbox writes) will surface
+that material ahead of canonical pages. `exclude_dirs` keeps those subtrees out of the
+index:
+
+```jsonc
+"exclude_dirs": ["00_inbox/_reports", "00_inbox/_capture_queue", "_inbox"]
+```
+
+Entries are **source-relative directory prefixes**, applied under every configured
+source root. `"a/b"`, `"/a/b"`, and `"./a/b/"` normalize identically, and the whole
+subtree below a match is pruned. Matching is per path segment, so `"_reports"` never
+swallows a sibling `"_reportsmith"`.
+
+This is deliberately binary: an excluded subtree becomes unreachable from recall, so
+exclude only what you would not want cited as an answer. Historical material you still
+want to reach occasionally is a better fit for a future scoped search than for
+exclusion. A small hard-coded set (`_scratch`, `_archive`, `.git`, `node_modules`,
+`.obsidian`, `_recall`) is always excluded, with the one opt-out below.
+
+### Re-admitting an archive (`include_dirs`)
+
+The hard-coded `_archive` rule matches by folder name at any depth, so an archive that
+holds reference notes you still want cited (old debriefs, closed project records) is
+invisible as well. `include_dirs` indexes specific archive folders anyway:
+
+```jsonc
+"include_dirs": ["projects/acme/_archive"]
+```
+
+Entries are exact source-relative paths, normalized like `exclude_dirs`, and each must
+end in `_archive`. Only the listed folder is re-admitted: other `_archive` folders stay
+out, hard-coded names nested inside it (a `_scratch`, a deeper `_archive`) are still
+pruned, and an `exclude_dirs` match still wins. An entry that names any other folder, or
+sits below an always-excluded one, fails config validation instead of silently doing
+nothing.
+
+### Runtime layout
+
+`setup/install.sh` seeds `~/.recall/recall.py` **once** — and what it seeds is
+`tools/recall/launcher.py`, a stable launcher with no retrieval logic. The launcher locates
+the canonical engine at `tools/recall/recall.py` in the agent-rules checkout, re-execs under
+`~/.recall/.venv` when that venv exists, and hands off. So:
+
+- **fresh installs** get the launcher; engine fixes in the repo take effect immediately, no re-copy
+- **an existing `~/.recall/recall.py` is never overwritten** (`copy_once` refuses a populated target)
+- migrating a pre-launcher `~/.recall/recall.py` to the launcher is a deliberate gated step:
+  back up the current file, run the public engine's own tests, confirm retrieval parity against
+  the corpus's private benchmark, and get explicit owner approval before replacing it
+- set `AGENT_RULES_HOME` if the checkout is not at `~/.agent-rules`
+
+`~/.recall/` holds only device-local state after that: `config.json`, `.venv`, `memory.db`,
+and `bench_labels.json`. None of it is tracked or synced through Git.
 
 ## Setup
 
@@ -114,8 +206,22 @@ The embedder endpoint/model are also overridable per machine:
 { "sources": [
     { "label": "memory", "path": "~/notes/memory" },
     { "label": "vault",  "path": "~/notes/vault" }
-] }
+  ],
+  "retrieval_mode": "vector",   // "vector" (default) or "hybrid"
+  "read_only": false,           // true → reader: never indexes or publishes
+  "publish_path": null          // set on the writer → snapshot target in the sync folder
+}
 ```
+
+`retrieval_mode` sets the default ranker. Keep it `vector` unless this corpus's **own**
+private benchmark (`bench_quality.py` against the real `bench_labels.json`) shows `hybrid`
+winning on hit@k / MRR. A per-query `--vector` / `--hybrid` flag overrides it either way.
+
+If `inbox` is configured, it must be directly walkable inside an available `source`: not
+outside it, below an excluded directory, or through a child-directory symlink. This prevents
+`add --publish` from shipping a snapshot that omits the newly written note. If indexing is
+deferred because the embedder is unavailable, the note remains saved but publication is
+skipped; retry with `index --publish` once the embedder is reachable.
 
 `config.json` and `bench_labels.json` are gitignored (they describe a personal corpus); only
 the `.example` templates are tracked. Individual Markdown notes are the source of truth;
@@ -138,9 +244,9 @@ It returns ranked path:line snippets across the whole corpus. Open full files on
 snippet is insufficient. Requires the embedding server; if it errors, fall back to grep.
 ```
 
-Which file: `AGENTS.md` is the cross-tool standard (Codex, OpenCode); `CLAUDE.md` / `GEMINI.md`
-are tool-specific. Keep `AGENTS.md` canonical and symlink the rest to it
-(`ln -s AGENTS.md CLAUDE.md`) so one edit reaches every runtime.
+Which file: `AGENTS.md` is the cross-tool standard (Codex, OpenCode, Pi, and Claude Code all read
+it). Keep `AGENTS.md` canonical; only tools that read just their own filename need a symlink
+(`ln -s AGENTS.md GEMINI.md`) so one edit reaches every runtime.
 
 **Keeping the index fresh.** The index is a derived cache; it goes stale when memory files
 change. Reindex on a trigger or a schedule:
@@ -196,4 +302,4 @@ hop); 1.1 MB for 173 chunks.
 - Retrieval quality depends on chunking + embedder; chunking here is deliberately naive.
 - Embedder down → recall degrades to keyword-only (FTS) with a stderr warning, results tagged
   `[K]`; indexing still requires the embedder (it must embed).
-- Single-corpus, single-machine. The DB is a per-machine cache.
+- Shared snapshots use one designated writer; readers intentionally cannot index or publish.

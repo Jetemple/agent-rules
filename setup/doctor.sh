@@ -22,10 +22,10 @@ sentinel_hits() {
 }
 
 echo "== canonical-file model (clone integrity) =="
-if [ -L "$REPO/CLAUDE.md" ] && [ "$(readlink "$REPO/CLAUDE.md")" = "AGENTS.md" ]; then
-  echo "ok: CLAUDE.md -> AGENTS.md"
+if [ -e "$REPO/CLAUDE.md" ] || [ -L "$REPO/CLAUDE.md" ]; then
+  echo "FAIL: CLAUDE.md present; AGENTS.md is the only instruction file (Claude Code reads it directly)"; fail=1
 else
-  echo "FAIL: CLAUDE.md is not a symlink to AGENTS.md"; fail=1
+  echo "ok: AGENTS.md only (no CLAUDE.md)"
 fi
 
 echo "== no private voice profile in tree =="
@@ -140,7 +140,7 @@ fi
 
 echo "== claude: personal overlay imports the hub =="
 # Claude is special-cased (see map header): ~/.claude/AGENTS.md is a PERSONAL real file that
-# @imports core.md, and ~/.claude/CLAUDE.md symlinks to it.
+# @imports core.md. Claude Code reads it directly, so there is no ~/.claude/CLAUDE.md.
 if [ -d "$HOME/.claude" ]; then
   if [ -f "$HOME/.claude/AGENTS.md" ]; then
     if grep -q "^@$REPO/core.md" "$HOME/.claude/AGENTS.md"; then
@@ -151,10 +151,10 @@ if [ -d "$HOME/.claude" ]; then
   else
     echo "warn: ~/.claude/AGENTS.md missing (run ./setup/install.sh to create the stub)"; notinstalled=1
   fi
-  if [ -L "$HOME/.claude/CLAUDE.md" ] && [ "$(readlink "$HOME/.claude/CLAUDE.md")" = "AGENTS.md" ]; then
-    echo "ok: ~/.claude/CLAUDE.md -> AGENTS.md"
+  if [ -e "$HOME/.claude/CLAUDE.md" ] || [ -L "$HOME/.claude/CLAUDE.md" ]; then
+    echo "warn: ~/.claude/CLAUDE.md exists; merge it into AGENTS.md and remove it"; notinstalled=1
   else
-    echo "warn: ~/.claude/CLAUDE.md is not a symlink to AGENTS.md"; notinstalled=1
+    echo "ok: no ~/.claude/CLAUDE.md (Claude Code reads AGENTS.md)"
   fi
 else
   echo "skip (not installed): claude (~/.claude absent)"
@@ -183,25 +183,37 @@ else
   echo "warn: no ~/.config/agent-rules/private-patterns (guard runs generic checks only)"; notinstalled=1
 fi
 
-echo "== recall (canonical code + device-local state) =="
-for f in recall.py recall requirements.txt README.md config.example.json \
-         bench_efficiency.py bench_quality.py bench_vs_grep.py bench_labels.example.json .gitignore; do
-  dest="$HOME/.recall/$f"
-  want="$REPO/tools/recall/$f"
-  if [ -L "$dest" ] && [ "$(readlink "$dest")" = "$want" ]; then
-    echo "ok: $dest -> $want"
-  elif [ -e "$dest" ] || [ -L "$dest" ]; then
-    echo "FAIL: $dest is not linked to canonical $want"; fail=1
-  else
-    echo "warn: $dest not linked (run ./setup/install.sh)"; notinstalled=1
-  fi
-done
+echo "== recall (skipped if not set up) =="
+# The public launcher gets a checksum check; private config/db never do.
+launcher="$HOME/.recall/recall.py"
+canonical_launcher="$REPO/tools/recall/launcher.py"
+if [ -x "$launcher" ] && cmp -s "$launcher" "$canonical_launcher"; then
+  echo "ok: recall launcher matches canonical launcher"
+elif [ -e "$launcher" ]; then
+  echo "warn: recall launcher/runtime differs; preserve it and run the documented migration gate"
+  notinstalled=1
+else
+  echo "warn: recall launcher absent (run ./setup/install.sh)"
+  notinstalled=1
+fi
+if [ -f "$REPO/tools/recall/recall.py" ]; then
+  echo "ok: canonical recall engine present"
+else
+  echo "FAIL: canonical recall engine missing"; fail=1
+fi
 if [ -d "$HOME/.recall/.venv" ]; then echo "ok: recall venv present"
 else echo "warn: no ~/.recall/.venv (see Setup in ~/.recall/README.md)"; notinstalled=1; fi
 if [ -f "$HOME/.recall/config.json" ]; then echo "ok: ~/.recall/config.json present"
 else echo "warn: no ~/.recall/config.json (copy config.example.json there)"; notinstalled=1; fi
-if [ -f "$HOME/.recall/memory.db" ]; then echo "ok: ~/.recall/memory.db index built"
-else echo "warn: no ~/.recall/memory.db (run: python3 ~/.recall/recall.py index)"; notinstalled=1; fi
+# Resolve the configured db_path (default ~/.recall/memory.db) without echoing
+# any other config value.
+recall_db="$HOME/.recall/memory.db"
+if [ -f "$HOME/.recall/config.json" ]; then
+  cfg_db=$(python3 -c 'import json,os,sys;d=json.load(open(sys.argv[1]));p=d.get("db_path");print(os.path.expanduser(p) if p else "")' "$HOME/.recall/config.json" 2>/dev/null || true)
+  [ -n "$cfg_db" ] && recall_db="$cfg_db"
+fi
+if [ -f "$recall_db" ]; then echo "ok: recall index built"
+else echo "warn: recall index not built (run: python3 ~/.recall/recall.py index)"; notinstalled=1; fi
 
 echo
 if [ "$fail" -ne 0 ]; then

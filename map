@@ -17,8 +17,8 @@
 #          Trade-off: not live — re-run setup/install.sh to resync the block after editing
 #          core.md. setup/doctor.sh FAILs if a block has drifted.
 #
-# Claude is handled specially by install.sh (personal layer: its file @imports core.md and
-# CLAUDE.md symlinks to it), so it is intentionally NOT listed here.
+# Claude is handled specially by install.sh (personal layer: ~/.claude/AGENTS.md @imports
+# core.md; Claude Code reads AGENTS.md directly), so it is intentionally NOT listed here.
 
 codex      ~/.codex/AGENTS.md                   core.md   block
 gemini     ~/.gemini/GEMINI.md                  core.md   link

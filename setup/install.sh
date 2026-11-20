@@ -178,14 +178,11 @@ if [ -d "$CLAUDE_DIR" ]; then
     echo "ok (personal file present, left untouched): $CLAUDE_DIR/AGENTS.md"
     echo "   -> ensure it contains a line:  @$REPO/core.md"
   fi
-  # CLAUDE.md must resolve to AGENTS.md (relative link within ~/.claude).
-  if [ -L "$CLAUDE_DIR/CLAUDE.md" ] && [ "$(readlink "$CLAUDE_DIR/CLAUDE.md")" = "AGENTS.md" ]; then
-    echo "ok (already linked): $CLAUDE_DIR/CLAUDE.md -> AGENTS.md"
-  elif [ -e "$CLAUDE_DIR/CLAUDE.md" ] && [ ! -L "$CLAUDE_DIR/CLAUDE.md" ]; then
-    echo "REFUSE: $CLAUDE_DIR/CLAUDE.md is a real file. Move it into AGENTS.md, then re-run." >&2
+  # Claude Code reads AGENTS.md directly, so no CLAUDE.md is created. Never delete one: it may hold real rules.
+  if [ -e "$CLAUDE_DIR/CLAUDE.md" ] || [ -L "$CLAUDE_DIR/CLAUDE.md" ]; then
+    echo "warn: $CLAUDE_DIR/CLAUDE.md exists; merge any real content into AGENTS.md and remove it" >&2
   else
-    echo "link: $CLAUDE_DIR/CLAUDE.md -> AGENTS.md"
-    [ "$DRY" -eq 0 ] && ln -s AGENTS.md "$CLAUDE_DIR/CLAUDE.md"
+    echo "ok (no CLAUDE.md; Claude Code reads AGENTS.md): $CLAUDE_DIR"
   fi
 else
   echo "skip (not installed): claude (~/.claude absent)"
@@ -207,10 +204,16 @@ echo "== statusline (optional; seeded once as a real file, not symlinked — mea
 copy_once "$REPO/setup/statusline.sh" "$HOME/.claude/statusline.sh"
 
 echo
-echo "== recall (optional; canonical code linked into ~/.recall; venv/config/db stay device-local) =="
-for f in recall.py recall requirements.txt README.md config.example.json \
+echo "== recall (optional; seeded once into ~/.recall — device state and config live here, the engine stays in the repo) =="
+# ~/.recall/recall.py is a thin *launcher*: it execs the canonical engine
+# (tools/recall/recall.py) through the device venv. Seeding the launcher (not a
+# copy of the engine) keeps retrieval logic single-sourced while ~/.recall stays
+# free to diverge per device. An existing real ~/.recall/recall.py is never
+# touched — the documented migration gate handles that switch deliberately.
+copy_once "$REPO/tools/recall/launcher.py" "$HOME/.recall/recall.py"
+for f in recall requirements.txt README.md config.example.json \
          bench_efficiency.py bench_quality.py bench_vs_grep.py bench_labels.example.json .gitignore; do
-  link "$REPO/tools/recall/$f" "$HOME/.recall/$f"
+  copy_once "$REPO/tools/recall/$f" "$HOME/.recall/$f"
 done
 
 echo
