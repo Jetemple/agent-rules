@@ -123,6 +123,10 @@ echo "== spot-check the wiring doctor is supposed to verify =="
 grep -qF '# >>> agent-rules hub' "$HOME/.codex/AGENTS.md" || fail "codex block not written (mode=block)"
 [ ! -e "$HOME/.claude/CLAUDE.md" ] && [ ! -L "$HOME/.claude/CLAUDE.md" ] || fail "install created ~/.claude/CLAUDE.md (Claude reads AGENTS.md directly)"
 grep -q "^@$REPO/core.md" "$HOME/.claude/AGENTS.md" || fail "claude AGENTS.md missing hub import"
+for rules_file in "$REPO/core.md" "$HOME/.config/opencode/AGENTS.md" "$HOME/.pi/agent/AGENTS.md" "$HOME/.codex/AGENTS.md"; do
+  grep -qF '**No nested coding-agent CLIs.**' "$rules_file" \
+    || fail "nested coding-agent CLI prohibition missing from $rules_file"
+done
 [ -x "$HOME/.claude/statusline.sh" ] || fail "statusline.sh not seeded/executable"
 [ -x "$HOME/.recall/recall.py" ] || fail ".recall/recall.py not seeded/executable"
 [ -f "$HOME/.recall/config.example.json" ] || fail ".recall/config.example.json not seeded"

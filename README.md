@@ -17,7 +17,7 @@ tool's load-point back at the hub. Edit the hub once, every agent gets it. A new
 | `AGENTS.md` | repo-local rules for working in this checkout (Claude Code reads it directly) |
 | `check-privacy.sh` | pre-commit privacy guard; identity patterns live outside the repo |
 | `rules/` | composable rule snippets |
-| `workflows/` | own generic skills (`council`, `drain-memory`, `handoff`, `wrap`, `your-voice`) |
+| `workflows/` | own generic skills (`council`, `decision-to-plan`, `drain-memory`, `handoff`, `wrap`, `your-voice`) |
 | `setup/` | `install.sh`, `doctor.sh`, example configs (macOS/zsh) |
 | `tools/recall/` | a semantic memory-recall CLI (`recall.py` engine + `launcher.py`); shareable across machines via a reader/writer snapshot ([setup](tools/recall/README.md#setup)) |
 

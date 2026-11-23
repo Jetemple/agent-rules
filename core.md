@@ -6,10 +6,10 @@ machines. Tool-specific or personal detail lives in each tool's own file, not he
 
 ## Always-on
 
-- **Confirm before any remote mutation.** Before `git commit`, `git push`, merge, PR
-  create/update, or any remote write, stop and get explicit confirmation once the repo, branch,
-  action, and intended diff are all known. A broad "fix it" / "go ahead" / "ship it" is not
-  approval for a specific commit or push.
+- **Confirm before any remote mutation.** Before `git push`, merge, PR create/update, or any
+  remote write, stop and get explicit confirmation once the repo, branch, action, and intended
+  diff are all known. A broad "fix it" / "go ahead" / "ship it" is not approval for a specific
+  push. Local `git commit` needs no confirmation.
 - **NEVER merge to the default branch or trigger a release yourself.** The human clicks merge.
   Approval must literally name the action ("merge PR #12", "tag the release") — enthusiasm
   ("lets push!", "ship it", "lets go") is not it. If the literal reading of a request is
@@ -24,6 +24,22 @@ machines. Tool-specific or personal detail lives in each tool's own file, not he
   query the shipped semantic index (`tools/recall`) before grepping blindly. For large scouting
   or cross-file mapping, delegate to a bounded subagent with an explicit objective, scope, output
   contract, and stop condition.
+- **Reference library.** If `${AGENT_LIBRARY:-~/syncthing/library}/INDEX.md` exists, check it
+  before giving domain advice on a topic it lists. Follow the index to the matching section, read
+  only that section, and cite book, chapter, and section. Mark anything not from the book as yours.
+- **No nested coding-agent CLIs.** Never invoke an external coding-agent CLI (`opencode`,
+  `codex exec`, `claude`, or equivalent), whether directly, through a wrapper, or as a fallback,
+  unless the human explicitly approves that exact invocation. General authorization to implement,
+  continue, or use subagents is not approval. Built-in bounded delegation tools remain allowed.
+- **Browser automation is opt-in.** Never invoke Chrome DevTools, Chrome MCP, or any browser
+  automation merely because it is available. Prefer local files, CLI tools, existing context,
+  direct APIs, and non-automated web research. Use browser automation only when the user
+  explicitly requests browser interaction or browser-only state or functionality is necessary
+  and cannot reasonably be obtained another way. If unclear, ask first.
+- **Driving the user's own signed-in browser.** Other agents may be using it at the same time.
+  Work only in a tab you opened under a name unique to you, and target that tab on every call;
+  never act on a shared default tab or the tab the user is viewing. Never switch or focus the
+  user's tab unless they ask. Close only the tabs you opened.
 - **No `docs/` in public repos.** A public GitHub repo never tracks a `docs/` directory. Before
   making a repo public, or committing to one that already is, check `git ls-files docs/` and stop
   if it lists anything. Agent plans and specs (e.g. `docs/superpowers/`) live outside the repo or
