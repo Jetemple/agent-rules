@@ -63,7 +63,9 @@ For each candidate, check it isn't already captured by querying recall:
 python3 ~/.recall/recall.py "the candidate fact in a few words" -k 3
 ```
 If a near-match comes back `[V+K]`/`[V]` at #1, it's likely already covered — drop
-it, or plan to *extend* that file rather than create a duplicate. Do not read or update a
+it, or plan to *extend* that file rather than create a duplicate. Files written in the last few
+minutes may not be indexed yet, so also run `rg -il "<key words>" <memory folder>` on the folder
+you would write to (step 4). Do not read or update a
 `MEMORY.md` catalog for deduplication; recall searches the source files directly.
 
 ### 3. Propose before writing
@@ -91,8 +93,12 @@ in-discipline (the "never persist from a throwaway/subagent run" rule is about
 - `feedback`/`project` bodies end with `**Why:**` and `**How to apply:**` lines.
 - Link related memories with `[[name]]` (cross-dir links are fine; a link to a
   not-yet-written memory is OK — it marks one worth writing).
-- Pick the memory dir that matches the current project (the matching project dir for
-  project-specific facts, global for cross-project facts).
+- Write into a folder recall indexes: one of the `sources` paths in `~/.recall/config.json`.
+  Project facts go in `<source>/<project>/`, where `<project>` is the existing folder for this
+  repo, or for a new repo its path under `~` with `/` turned into `-` (e.g. `code-myapp`).
+  Cross-project facts go at the top of the source.
+- Never write to a runtime's built-in auto-memory folder (e.g. `~/.claude/projects/*/memory/`).
+  recall doesn't index it and other runtimes can't see it.
 - Write only the individual source file. **Never create, append to, or maintain `MEMORY.md`.**
   recall indexes source files directly, so a second catalog duplicates content and grows stale.
 - To extend rather than duplicate, `Edit` the existing file instead.
@@ -101,7 +107,13 @@ in-discipline (the "never persist from a throwaway/subagent run" rule is about
 recall's index is derived and must be refreshed after a write. If you've wired the optional
 `PostToolUse` reindex hook (see `tools/recall/README.md`), it runs automatically on every
 `memory/*.md` write; otherwise run `python3 ~/.recall/recall.py index` yourself (it's
-incremental). Then confirm one new memory is retrievable:
+incremental; on a writer with `publish_path` set, use `index --publish`).
+
+**Reader machines skip this step.** If `~/.recall/config.json` has `"read_only": true`, recall
+refuses to index. Report "saved; searchable after the writer's next index" instead, and do the
+spot-check only once that has happened.
+
+Then confirm one new memory is retrievable:
 ```sh
 python3 ~/.recall/recall.py "a question the new memory should answer" -k 2
 ```

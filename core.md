@@ -24,6 +24,11 @@ machines. Tool-specific or personal detail lives in each tool's own file, not he
   query the shipped semantic index (`tools/recall`) before grepping blindly. For large scouting
   or cross-file mapping, delegate to a bounded subagent with an explicit objective, scope, output
   contract, and stop condition.
+- **Memory lives in recall.** Don't use a runtime's built-in auto-memory (e.g. Claude Code's
+  `~/.claude/projects/*/memory/`) and never create or maintain a `MEMORY.md` catalog. Before acting
+  on a project or topic with history, query recall (`python3 ~/.recall/recall.py "<topic>" -k 5`).
+  Write memory only through the `wrap` workflow, after the user approves: one fact per file, in a
+  folder recall indexes.
 - **Reference library.** If `${AGENT_LIBRARY:-~/syncthing/library}/INDEX.md` exists, check it
   before giving domain advice on a topic it lists. Follow the index to the matching section, read
   only that section, and cite book, chapter, and section. Mark anything not from the book as yours.
