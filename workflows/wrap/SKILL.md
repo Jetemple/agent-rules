@@ -94,9 +94,12 @@ in-discipline (the "never persist from a throwaway/subagent run" rule is about
 - Link related memories with `[[name]]` (cross-dir links are fine; a link to a
   not-yet-written memory is OK — it marks one worth writing).
 - Write into a folder recall indexes: one of the `sources` paths in `~/.recall/config.json`.
-  Project facts go in `<source>/<project>/`, where `<project>` is the existing folder for this
-  repo, or for a new repo its path under `~` with `/` turned into `-` (e.g. `code-myapp`).
-  Cross-project facts go at the top of the source.
+  Pick the source that already holds per-project folders (or this repo's folder); if none or
+  several qualify, name the candidates in the step 3 table and let the user choose. Project facts
+  go in `<source>/<project>/`, where `<project>` is the existing folder for this repo, or for a new
+  repo its path under `~` with `/` turned into `-` (e.g. `code-myapp`). Cross-project facts go at
+  the top of the source. The target must not sit under any `exclude_dirs` entry, or recall will
+  never index it.
 - Never write to a runtime's built-in auto-memory folder (e.g. `~/.claude/projects/*/memory/`).
   recall doesn't index it and other runtimes can't see it.
 - Write only the individual source file. **Never create, append to, or maintain `MEMORY.md`.**
@@ -104,14 +107,18 @@ in-discipline (the "never persist from a throwaway/subagent run" rule is about
 - To extend rather than duplicate, `Edit` the existing file instead.
 
 ### 5. Reindex, then spot-check
-recall's index is derived and must be refreshed after a write. If you've wired the optional
-`PostToolUse` reindex hook (see `tools/recall/README.md`), it runs automatically on every
-`memory/*.md` write; otherwise run `python3 ~/.recall/recall.py index` yourself (it's
-incremental; on a writer with `publish_path` set, use `index --publish`).
+recall's index is derived and must be refreshed after a write. Run
+`python3 ~/.recall/recall.py index` (it's incremental). On a writer with `publish_path` set, run
+`index --publish` instead, so readers get the new snapshot. The optional `PostToolUse` hook (see
+`tools/recall/README.md`) runs plain `index` only when the path is under a `memory/` dir; if it
+didn't fire, or this machine publishes, run the command yourself anyway.
 
 **Reader machines skip this step.** If `~/.recall/config.json` has `"read_only": true`, recall
-refuses to index. Report "saved; searchable after the writer's next index" instead, and do the
-spot-check only once that has happened.
+refuses to index. A reader's new file becomes searchable only after three things happen: the file
+syncs to the writer, the writer runs `index --publish`, and the snapshot syncs back. If you don't
+know that sync path exists, write the fact with `recall.py add --stdin` instead, which drops it in
+the configured intake folder. Report "saved; searchable after it reaches the writer and the next
+published index", and skip the spot-check for now.
 
 Then confirm one new memory is retrievable:
 ```sh

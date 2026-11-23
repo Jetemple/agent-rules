@@ -98,5 +98,5 @@ Next verification or user decision
 ```
 
 The council returns analysis only. Any implementation or mutation is a separate primary-agent
-action governed by the active repository rules, including confirmation before commits or other
-remote mutations.
+action governed by the active repository rules, including confirmation before a push, merge, PR
+change, or other remote mutation.
