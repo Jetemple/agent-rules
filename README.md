@@ -17,7 +17,7 @@ tool's load-point back at the hub. Edit the hub once, every agent gets it. A new
 | `AGENTS.md` | repo-local rules for working in this checkout (Claude Code reads it directly) |
 | `check-privacy.sh` | pre-commit privacy guard; identity patterns live outside the repo |
 | `rules/` | composable rule snippets |
-| `workflows/` | own generic skills (`council`, `decision-to-plan`, `drain-memory`, `handoff`, `wrap`, `your-voice`) |
+| `workflows/` | own generic skills (`council`, `decision-to-plan`, `drain-memory`, `handoff`, `web-scout`, `wrap`, `your-voice`) |
 | `setup/` | `install.sh`, `doctor.sh`, example configs (macOS/zsh) |
 | `tools/recall/` | a semantic memory-recall CLI (`recall.py` engine + `launcher.py`); shareable across machines via a reader/writer snapshot ([setup](tools/recall/README.md#setup)) |
 
@@ -119,6 +119,8 @@ model_auto_compact_token_limit = 200000
 
 - **Superpowers** — a separate skills marketplace; several workflows here assume it is
   installed. This repo links it as a dependency, doesn't republish its skills.
+- **[firefox-agent-bridge](https://github.com/Jetemple/firefox-agent-bridge)** — provides the `ff`
+  CLI that `web-scout` requires to drive a signed-in Firefox.
 - **`embeddinggemma-300M` (GGUF)** — the embedding model `tools/recall` uses, served by
   llama.cpp (`llama serve`). See [tools/recall/README.md](tools/recall/README.md#setup).
 

@@ -32,7 +32,7 @@ each tool. This file layers only the repo-local rules on top. (Claude Code reads
   `~/.config/agent-rules/private-patterns`, so the guard never encodes who you are.
 - `setup/` — `install.sh` (wires the map + hook), `doctor.sh` (verifies), statusline, hooks.
 - `rules/` — composable rule snippets for project-level rules files.
-- `workflows/` — generic skills (`council`, `drain-memory`, `handoff`, `wrap`, `your-voice`).
+- `workflows/` — generic skills (`council`, `decision-to-plan`, `drain-memory`, `handoff`, `web-scout`, `wrap`, `your-voice`).
 - `tools/recall/` — a semantic memory-recall CLI.
 
 ## Where things are documented

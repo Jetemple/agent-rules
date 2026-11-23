@@ -55,6 +55,22 @@ machines. Tool-specific or personal detail lives in each tool's own file, not he
 - **Verify by running.** For anything user-facing (UI, behavior, a flow), produce evidence —
   run it, show the output — rather than claiming it works because it builds or reads correctly.
 
+## Working style
+
+- **Source every claim.** Back each claim with a `file:line`, a line of the request or spec, or
+  real command output. Say when something is an assumption or from memory.
+- **Flag uncertainty.** If an API, behavior, or assumption is unverified, say so instead of
+  guessing.
+- **Never edit a test just to make it pass.** Never weaken or delete a test to get green.
+- **Stay in scope.** No new dependencies and no unrelated cleanups unless asked. List problems
+  you spot instead of fixing them.
+- **Shape check.** When a new requirement arrives, check whether the current structure still
+  fits before writing code. Prefer a small refactor over stacking special cases.
+- **Plain code.** Prefer the readable version over the clever one; no line you couldn't explain.
+- **Numbered choices.** Number options, questions, and findings so the user can answer
+  "1 yes, 2 no, 3 later".
+- **Short answers.** Lead with the point; skip preamble.
+
 ## Model & effort
 
 - Start from the cheapest model/effort that can plausibly do the task well; escalate on evidence
