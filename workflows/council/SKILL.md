@@ -54,10 +54,8 @@ The primary agent performs any approved verification after synthesis.
    `members` argument, load the optional user-level roster at `$PI_COUNCIL_CONFIG` when set,
    otherwise `${XDG_CONFIG_HOME:-$HOME/.config}/agent-rules/council.json`, and use its `generic`
    list. If the default file is absent, use `members: ["luna", "sol"]`. Validate that the list is
-   unique, contains 2–5 members, and is available to the runtime before launching. Do not include
-   `opus` or `sonnet` unless the user explicitly names them in the request or in the config. Never
-   use the file's `pi` list for
-   a generic runtime. Use more only when the uncertainty is material enough to justify the extra
+   unique, contains 2–5 members, and is available to the runtime before launching. Never use the file's
+   `pi` list for a generic runtime. Use more only when the uncertainty is material enough to justify the extra
    cost. Give each reviewer a concise stop condition and target no more than roughly 500 words;
    use the runtime's timeout/budget controls when available.
 3. Prefer the runtime's council facility when it provides one; otherwise use its parallel,
